@@ -8,6 +8,7 @@ use boojum::gadgets::u256::UInt256;
 use boojum::gadgets::boolean::Boolean;
 use boojum::gadgets::u32::UInt32;
 
+use crate::ethereum_types::U256;
 use boojum::config::*;
 use boojum::cs::traits::cs::ConstraintSystem;
 use boojum::cs::traits::cs::DstBuffer;
@@ -18,7 +19,6 @@ use boojum::gadgets::traits::allocatable::{CSAllocatable, CSAllocatableExt};
 use boojum::gadgets::traits::castable::WitnessCastable;
 use boojum::gadgets::traits::encodable::{CircuitEncodable, CircuitEncodableExt};
 use boojum::gadgets::traits::selectable::Selectable;
-use ethereum_types::U256;
 
 use boojum::gadgets::traits::witnessable::WitnessHookable;
 use cs_derive::*;

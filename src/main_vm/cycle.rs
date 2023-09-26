@@ -901,8 +901,7 @@ where
         &dependencies,
         &[],
         move |inputs: &[F], _buffer: &mut DstBuffer<'_, '_, F>| {
-            let execute = inputs[0].as_u64();
-            let execute = u64_as_bool(execute);
+            let execute = <bool as WitnessCastable<F, F>>::cast_from_source(inputs[0]);
 
             use crate::main_vm::cycle::memory_query::MemoryQueryWitness;
 

@@ -11,9 +11,9 @@ use boojum::gadgets::u256::UInt256;
 use boojum::gadgets::u32::UInt32;
 use cs_derive::*;
 
+use crate::ethereum_types::U256;
 use crate::fsm_input_output::circuit_inputs::INPUT_OUTPUT_COMMITMENT_LENGTH;
 use boojum::gadgets::num::Num;
-use ethereum_types::U256;
 use zkevm_opcode_defs::system_params::PRECOMPILE_AUX_BYTE;
 
 use crate::base_structures::log_query::*;
@@ -132,15 +132,20 @@ where
     // so we taken default FSM state that has state.read_precompile_call = true;
     let input_queue_is_empty = precompile_calls_queue.is_empty(cs);
     // we can only skip the full circuit if we are not in any form of progress
-    let can_finish_immediatelly = Boolean::multi_and(cs, &[state.read_precompile_call, input_queue_is_empty]);
-    
+    let can_finish_immediatelly =
+        Boolean::multi_and(cs, &[state.read_precompile_call, input_queue_is_empty]);
+
     if crate::config::CIRCUIT_VERSOBE {
         dbg!(can_finish_immediatelly.witness_hook(cs)());
         dbg!(state.witness_hook(cs)());
     }
 
-    state.read_precompile_call = state.read_precompile_call.mask_negated(cs, can_finish_immediatelly);
-    state.read_unaligned_words_for_round = state.read_unaligned_words_for_round.mask_negated(cs, can_finish_immediatelly);
+    state.read_precompile_call = state
+        .read_precompile_call
+        .mask_negated(cs, can_finish_immediatelly);
+    state.read_unaligned_words_for_round = state
+        .read_unaligned_words_for_round
+        .mask_negated(cs, can_finish_immediatelly);
     state.completed = Boolean::multi_or(cs, &[state.completed, can_finish_immediatelly]);
 
     // main work cycle

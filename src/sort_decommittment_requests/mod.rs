@@ -420,6 +420,7 @@ fn concatenate_key<F: SmallField, CS: ConstraintSystem<F>>(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ethereum_types::U256;
     use boojum::algebraic_props::poseidon2_parameters::Poseidon2GoldilocksExternalMatrix;
     use boojum::cs::implementations::reference_cs::CSDevelopmentAssembly;
     use boojum::cs::traits::gate::GatePlacementStrategy;
@@ -431,7 +432,6 @@ mod tests {
     use boojum::gadgets::u256::UInt256;
     use boojum::implementations::poseidon2::Poseidon2Goldilocks;
     use boojum::worker::Worker;
-    use ethereum_types::U256;
     type F = GoldilocksField;
     type P = GoldilocksField;
 

@@ -1,4 +1,5 @@
 use crate::base_structures::vm_state::*;
+use crate::ethereum_types::U256;
 use boojum::cs::{traits::cs::ConstraintSystem, Variable};
 use boojum::field::SmallField;
 use boojum::gadgets::traits::auxiliary::PrettyComparison;
@@ -16,7 +17,6 @@ use boojum::gadgets::{
 use boojum::serde_utils::BigArraySerde;
 use cs_derive::*;
 use derivative::*;
-use ethereum_types::U256;
 
 #[derive(Derivative, CSAllocatable, CSSelectable, CSVarLengthEncodable, WitnessHookable)]
 #[derivative(Clone, Copy, Debug)]
