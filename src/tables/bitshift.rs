@@ -1,7 +1,7 @@
 use super::*;
+use crate::ethereum_types::U256;
 use boojum::cs::implementations::lookup_table::LookupTable;
 use boojum::field::SmallField;
-use ethereum_types::U256;
 
 pub const VM_SHIFT_TO_NUM_CONVERTER_TABLE_NAME: &'static str = "Shift to num converter table";
 

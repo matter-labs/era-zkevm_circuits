@@ -1,6 +1,7 @@
 use cs_derive::*;
 
 use super::*;
+use crate::ethereum_types::U256;
 use boojum::cs::traits::cs::ConstraintSystem;
 use boojum::cs::traits::cs::DstBuffer;
 use boojum::cs::Variable;
@@ -15,7 +16,6 @@ use boojum::gadgets::traits::selectable::Selectable;
 use boojum::gadgets::traits::witnessable::WitnessHookable;
 use boojum::gadgets::u32::UInt32;
 use boojum::{field::SmallField, gadgets::u256::UInt256};
-use ethereum_types::U256;
 
 #[derive(Derivative, CSAllocatable, CSSelectable, WitnessHookable, CSVarLengthEncodable)]
 #[derivative(Clone, Copy, Debug)]

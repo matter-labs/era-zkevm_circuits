@@ -389,12 +389,8 @@ pub(crate) fn apply_calls_and_ret<
         &dependencies,
         &[],
         move |inputs: &[F], _buffer: &mut DstBuffer<'_, '_, F>| {
-            let execute = inputs[0].as_u64();
-            let execute = u64_as_bool(execute);
-
-            let is_call_like = inputs[1].as_u64();
-            let is_call_like = u64_as_bool(is_call_like);
-
+            let execute = <bool as WitnessCastable<F, F>>::cast_from_source(inputs[0]);
+            let is_call_like = <bool as WitnessCastable<F, F>>::cast_from_source(inputs[1]);
             let new_depth = <u32 as WitnessCastable<F, F>>::cast_from_source(inputs[2]);
 
             let mut query =

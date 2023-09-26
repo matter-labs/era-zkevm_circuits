@@ -1,6 +1,6 @@
 [package]
 name = "zkevm_circuits"
-version = "0.1.0"
+version = "1.4.0"
 edition = "2021"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
@@ -19,7 +19,6 @@ zkevm_opcode_defs = {git = "https://github.com/matter-labs/era-zkevm_opcode_defs
 boojum = {git = "https://github.com/matter-labs/era-boojum.git", branch = "main"}
 # boojum = { path = "../boojum" }
 bincode = "*"
-ethereum-types = "0.12.*"
 cs_derive = { git = "https://github.com/matter-labs/era-boojum.git", branch = "main" }
 # cs_derive = { path = "../boojum/cs_derive" }
 serde_json = "*"

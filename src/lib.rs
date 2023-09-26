@@ -9,6 +9,7 @@
 use derivative::*;
 
 pub use boojum;
+pub use boojum::ethereum_types;
 
 pub mod config;
 

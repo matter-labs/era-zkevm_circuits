@@ -6,13 +6,13 @@ use boojum::cs::{Place, Variable};
 use boojum::gadgets::boolean::Boolean;
 use boojum::gadgets::num::Num;
 use boojum::gadgets::queue::{QueueState, QueueTailState};
+use boojum::gadgets::traits::castable::WitnessCastable;
 
 use crate::base_structures::vm_state::VmLocalState;
 use boojum::config::*;
 use boojum::gadgets::traits::selectable::Selectable;
 use boojum::gadgets::u32::UInt32;
 use boojum::gadgets::u8::UInt8;
-use boojum::utils::u64_as_bool;
 use boojum::{field::SmallField, gadgets::u16::UInt16};
 
 pub mod cycle;

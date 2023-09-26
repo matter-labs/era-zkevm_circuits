@@ -2,7 +2,7 @@ pub mod input;
 
 use input::*;
 
-use ethereum_types::U256;
+use crate::ethereum_types::U256;
 use std::collections::VecDeque;
 use std::sync::{Arc, RwLock};
 
@@ -449,6 +449,7 @@ mod tests {
 
     use super::*;
     use crate::base_structures::vm_state::FULL_SPONGE_QUEUE_STATE_WIDTH;
+    use crate::ethereum_types::{Address, U256};
     use boojum::algebraic_props::poseidon2_parameters::Poseidon2GoldilocksExternalMatrix;
     use boojum::cs::implementations::reference_cs::CSDevelopmentAssembly;
     use boojum::cs::traits::gate::GatePlacementStrategy;
@@ -463,7 +464,6 @@ mod tests {
     use boojum::gadgets::u8::UInt8;
     use boojum::implementations::poseidon2::Poseidon2Goldilocks;
     use boojum::worker::Worker;
-    use ethereum_types::{Address, U256};
 
     type F = GoldilocksField;
     type P = GoldilocksField;
@@ -586,7 +586,7 @@ mod tests {
         let word_witness = create_witness_allocator(cs);
 
         // Run the inner function
-        let final_state = unpack_code_into_memory_inner(
+        let _final_state = unpack_code_into_memory_inner(
             cs,
             &mut memory_queue,
             &mut decommit_queue,
@@ -619,7 +619,7 @@ mod tests {
     }
 
     fn create_witness_allocator<CS: ConstraintSystem<F>>(
-        cs: &mut CS,
+        _cs: &mut CS,
     ) -> ConditionalWitnessAllocator<F, UInt256<F>> {
         let code_words_witness = get_byte_code_witness();
 

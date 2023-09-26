@@ -827,10 +827,8 @@ where
         Num::allocate_multiple_from_closure_and_dependencies(
             cs,
             move |inputs: &[F]| {
-                let call_timestamp = inputs[0].as_u64() as u32;
-
-                let execute = inputs[1].as_u64();
-                let execute = u64_as_bool(execute);
+                let call_timestamp = <u32 as WitnessCastable<F, F>>::cast_from_source(inputs[0]);
+                let execute = <bool as WitnessCastable<F, F>>::cast_from_source(inputs[1]);
 
                 let mut guard = oracle.inner.write().expect("not poisoned");
                 let witness =
@@ -990,10 +988,8 @@ where
         &dependencies,
         &[],
         move |inputs: &[F], _buffer: &mut DstBuffer<'_, '_, F>| {
-            let execute = inputs[0].as_u64();
-            let execute = u64_as_bool(execute);
-
-            let current_depth = inputs[1].as_u64() as u32;
+            let execute = <bool as WitnessCastable<F, F>>::cast_from_source(inputs[0]);
+            let current_depth = <u32 as WitnessCastable<F, F>>::cast_from_source(inputs[1]);
 
             let mut query =
                 [F::ZERO; <ExecutionContextRecord<F> as CSAllocatableExt<F>>::INTERNAL_STRUCT_LEN];
@@ -1200,10 +1196,8 @@ where
     let read_value = UInt256::allocate_from_closure_and_dependencies(
         cs,
         move |inputs: &[F]| {
-            let is_storage = inputs[0].as_u64();
-            let execute = inputs[1].as_u64();
-            let is_storage = u64_as_bool(is_storage);
-            let execute = u64_as_bool(execute);
+            let is_storage = <bool as WitnessCastable<F, F>>::cast_from_source(inputs[0]);
+            let execute = <bool as WitnessCastable<F, F>>::cast_from_source(inputs[1]);
             let mut log_query =
                 [F::ZERO; <LogQuery<F> as CSAllocatableExt<F>>::INTERNAL_STRUCT_LEN];
             log_query.copy_from_slice(&inputs[2..]);
@@ -1503,8 +1497,7 @@ where
     let suggested_page = UInt32::allocate_from_closure_and_dependencies(
         cs,
         move |inputs: &[F]| {
-            let should_decommit = inputs[0].as_u64();
-            let should_decommit = u64_as_bool(should_decommit);
+            let should_decommit = <bool as WitnessCastable<F, F>>::cast_from_source(inputs[0]);
 
             let mut query =
                 [F::ZERO; <DecommitQuery<F> as CSAllocatableExt<F>>::INTERNAL_STRUCT_LEN];

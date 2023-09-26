@@ -219,10 +219,8 @@ pub(crate) fn apply_log<
     let pubdata_refund = UInt32::allocate_from_closure_and_dependencies(
         cs,
         move |inputs: &[F]| {
-            let is_write = inputs[0].as_u64();
-            let execute = inputs[1].as_u64();
-            let is_write = u64_as_bool(is_write);
-            let execute = u64_as_bool(execute);
+            let is_write = <bool as WitnessCastable<F, F>>::cast_from_source(inputs[0]);
+            let execute = <bool as WitnessCastable<F, F>>::cast_from_source(inputs[1]);
             let mut log_query =
                 [F::ZERO; <LogQuery<F> as CSAllocatableExt<F>>::INTERNAL_STRUCT_LEN];
             log_query.copy_from_slice(&inputs[2..]);
@@ -291,10 +289,8 @@ pub(crate) fn apply_log<
     let read_value = UInt256::allocate_from_closure_and_dependencies(
         cs,
         move |inputs: &[F]| {
-            let is_storage = inputs[0].as_u64();
-            let execute = inputs[1].as_u64();
-            let is_storage = u64_as_bool(is_storage);
-            let execute = u64_as_bool(execute);
+            let is_storage = <bool as WitnessCastable<F, F>>::cast_from_source(inputs[0]);
+            let execute = <bool as WitnessCastable<F, F>>::cast_from_source(inputs[1]);
             let mut log_query =
                 [F::ZERO; <LogQuery<F> as CSAllocatableExt<F>>::INTERNAL_STRUCT_LEN];
             log_query.copy_from_slice(&inputs[2..]);
@@ -345,8 +341,7 @@ pub(crate) fn apply_log<
     let prev_revert_head_witness = Num::allocate_multiple_from_closure_and_dependencies(
         cs,
         move |inputs: &[F]| {
-            let execute_rollback = inputs[0].as_u64();
-            let execute_rollback = u64_as_bool(execute_rollback);
+            let execute_rollback = <bool as WitnessCastable<F, F>>::cast_from_source(inputs[0]);
             let mut log_query =
                 [F::ZERO; <LogQuery<F> as CSAllocatableExt<F>>::INTERNAL_STRUCT_LEN];
             log_query.copy_from_slice(&inputs[1..]);
