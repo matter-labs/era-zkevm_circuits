@@ -848,18 +848,12 @@ pub fn scheduler_function<
     let mut proof_witnesses = witness.proof_witnesses;
 
     // create verifier
-    let r = cs as *mut CS;
-
     assert_eq!(
         config.vk_fixed_parameters.parameters,
         verifier_builder.geometry()
     );
 
     let verifier = verifier_builder.create_recursive_verifier(cs);
-
-    drop(cs);
-
-    let cs = unsafe { &mut *r };
 
     for (_idx, (circuit_type, state)) in SEQUENCE_OF_CIRCUIT_TYPES
         .iter()
