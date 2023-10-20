@@ -42,11 +42,12 @@ pub fn create_integer_to_bitmask_table<F: SmallField>(
     })
 }
 
+/// Creates a table of size 2^num_bits, with value [1<<x, 0] for each x.
 pub fn create_integer_set_ith_bit_table<F: SmallField>(
     num_bits: usize,
     name: &'static str,
 ) -> LookupTable<F, 3> {
-    assert!(num_bits <= 16);
+    assert!(num_bits <= 6);
     let mut all_keys = Vec::with_capacity(1 << num_bits);
     for integer in 0..(1u64 << num_bits) {
         let key = smallvec::smallvec![F::from_u64_unchecked(integer as u64)];
@@ -88,4 +89,26 @@ pub fn create_subpc_bitmask_table<F: SmallField>() -> LookupTable<F, 3> {
     //         smallvec::smallvec![F::from_u64_unchecked(result), F::ZERO]
     //     },
     // )
+}
+
+#[cfg(test)]
+mod tests {
+    use boojum::field::goldilocks::GoldilocksField;
+
+    use super::*;
+
+    #[test]
+    fn test_integer_set_ith() {
+        let table = create_integer_set_ith_bit_table::<GoldilocksField>(6, "test");
+
+        let do_lookup = |key| {
+            let (_position, result) =
+                table.lookup_value::<2>(&[GoldilocksField::from_nonreduced_u64(key)]);
+            result.iter().map(|x| x.0.clone()).collect::<Vec<u64>>()
+        };
+        assert_eq!(do_lookup(0), [1, 0]);
+        assert_eq!(do_lookup(1), [2, 0]);
+        assert_eq!(do_lookup(3), [8, 0]);
+        assert_eq!(do_lookup(63), [9223372036854775808, 0]);
+    }
 }
