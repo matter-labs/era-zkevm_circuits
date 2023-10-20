@@ -79,30 +79,13 @@ pub fn produce_fs_challenges<
 #[cfg(test)]
 mod tests {
     use crate::test_utils::create_test_cs;
-
-    use super::*;
-    use boojum::algebraic_props::poseidon2_parameters::Poseidon2GoldilocksExternalMatrix;
-    use boojum::cs::gates::{
-        BooleanConstraintGate, ConstantsAllocatorGate, DotProductGate,
-        FmaGateInBaseFieldWithoutConstant, MatrixMultiplicationGate, NopGate, ReductionGate,
-        SelectionGate, UIntXAddGate, ZeroCheckGate,
-    };
-    use boojum::cs::implementations::reference_cs::{
-        CSDevelopmentAssembly, CSReferenceImplementation,
-    };
-    use boojum::cs::traits::gate::GatePlacementStrategy;
-    use boojum::cs::CSGeometry;
-    use boojum::cs::*;
     use boojum::field::goldilocks::GoldilocksField;
     use boojum::field::Field;
-    use boojum::gadgets::tables::*;
     use boojum::gadgets::traits::allocatable::CSPlaceholder;
     use boojum::gadgets::traits::witnessable::WitnessHookable;
     use boojum::implementations::poseidon2::Poseidon2Goldilocks;
-    use boojum::worker::Worker;
 
-    type F = GoldilocksField;
-    type P = GoldilocksField;
+    use super::*;
 
     #[test]
     fn test_challenge_generation() {
@@ -112,10 +95,11 @@ mod tests {
 
         let cs = &mut owned_cs;
 
+        // Generate challenges based on two queues (one empty, and one with 1 element).
         let empty_queue: QueueTailState<GoldilocksField, 4> = QueueTailState::placeholder(cs);
 
         let other_queue = QueueTailState {
-            tail: [Num::allocated_constant(cs, F::ONE); 4],
+            tail: [Num::allocated_constant(cs, GoldilocksField::ONE); 4],
             length: UInt32::allocated_constant(cs, 1),
         };
 
