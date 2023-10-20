@@ -52,6 +52,7 @@ pub struct LeafLayerRecursionConfig<
     pub _marker: std::marker::PhantomData<(F, H, EXT)>,
 }
 
+/// Leaf layer is aggregating a bunch (currently 32) basic circuits of the same type into one.
 // NOTE: does NOT allocate public inputs! we will deal with locations of public inputs being the same at the "outer" stage
 pub fn leaf_layer_recursion_entry_point<
     F: SmallField,
@@ -93,6 +94,8 @@ where
         params,
         queue_state,
     } = input;
+    // So this queue is full of 'public inputs' for the basic circuits.
+    // Later, we verify the proofs (coming from proof_witnesses) and check that they really match these public inputs.
     let mut queue = RecursionQueue::<F, R>::from_state(cs, queue_state);
 
     let RecursionLeafParameters {
@@ -111,6 +114,8 @@ where
     // being one that we want
     let is_meaningful = queue.is_empty(cs).negated(cs);
 
+    // So vk_witness are parameters + tree cap.
+    // but when allocating, we only look at the tree cap. (and that's what inside commitment).
     let vk = AllocatedVerificationKey::<F, H>::allocate(cs, vk_witness);
     assert_eq!(
         vk.setup_merkle_tree_cap.len(),
@@ -123,6 +128,7 @@ where
         .iter()
         .zip(vk_commitment_computed.iter())
     {
+        // TODO: why conditionally?
         Num::conditionally_enforce_equal(cs, is_meaningful, a, b);
     }
 
