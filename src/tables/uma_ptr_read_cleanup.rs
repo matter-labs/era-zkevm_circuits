@@ -38,3 +38,29 @@ pub fn create_uma_ptr_read_bitmask_table<F: SmallField>() -> LookupTable<F, 3> {
         },
     )
 }
+
+#[cfg(test)]
+mod tests {
+    use boojum::field::goldilocks::GoldilocksField;
+
+    use super::*;
+
+    #[test]
+    fn test_uma_table() {
+        let table = create_uma_ptr_read_bitmask_table::<GoldilocksField>();
+
+        let do_lookup = |key| {
+            let (_position, result) =
+                table.lookup_value::<2>(&[GoldilocksField::from_nonreduced_u64(key)]);
+            result.iter().map(|x| x.0.clone()).collect::<Vec<u64>>()
+        };
+
+        assert_eq!(do_lookup(0), [0xffffffff, 0]);
+        assert_eq!(do_lookup(1), [0xfffffffe, 0]);
+        assert_eq!(do_lookup(2), [0xfffffffc, 0]);
+        assert_eq!(do_lookup(4), [0xfffffff0, 0]);
+        assert_eq!(do_lookup(8), [0xffffff00, 0]);
+        assert_eq!(do_lookup(16), [0xffff0000, 0]);
+        assert_eq!(do_lookup(31), [0x80000000, 0]);
+    }
+}
