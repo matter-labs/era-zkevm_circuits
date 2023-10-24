@@ -312,3 +312,74 @@ pub type MemoryQueue<F, R> = MemoryQueryQueue<F, 8, 12, 4, R>;
 
 pub type MemoryQueryQueueWitness<F, const SW: usize> =
     FullStateCircuitQueueWitness<F, MemoryQuery<F>, SW, MEMORY_QUERY_PACKED_WIDTH>;
+
+#[cfg(test)]
+mod tests {
+    use boojum::field::goldilocks::GoldilocksField;
+
+    use super::*;
+
+    #[test]
+    // Test that we can flatten and parse correctly.
+    fn test_memory_query_flatten() {
+        let mut owned_cs = test_utils::create_test_cs();
+        let value = U256::from_str_radix("1000100001000088387123123123", 16).unwrap();
+
+        let cs = &mut owned_cs;
+        let mem = MemoryQuery::<GoldilocksField> {
+            timestamp: UInt32::allocate_constant(cs, 15),
+            memory_page: UInt32::allocate_constant(cs, 18),
+            index: UInt32::allocate_constant(cs, 22),
+            rw_flag: Boolean::allocated_constant(cs, false),
+            is_ptr: Boolean::allocated_constant(cs, true),
+            value: UInt256::allocate_constant(cs, value),
+        };
+        let flatten = mem.flatten_as_variables();
+
+        let flatten_goldilocks =
+            flatten.map(|x| cs.get_value(Place::from_variable(x)).wait().unwrap()[0]);
+        let witness = MemoryQuery::witness_from_set_of_values(flatten_goldilocks);
+        assert_eq!(witness.timestamp, 15);
+        assert_eq!(witness.memory_page, 18);
+        assert_eq!(witness.index, 22);
+        assert_eq!(witness.rw_flag, false);
+        assert_eq!(witness.is_ptr, true);
+        assert_eq!(witness.value, value);
+    }
+
+    #[test]
+    // Test that we can flatten and parse correctly.
+    fn test_memory_query_encode() {
+        let mut owned_cs = test_utils::create_test_cs();
+        let value = U256::from_str_radix("1000100001000088387123123123", 16).unwrap();
+
+        let cs = &mut owned_cs;
+        let mut mem = MemoryQuery::<GoldilocksField> {
+            timestamp: UInt32::allocate_constant(cs, 15),
+            memory_page: UInt32::allocate_constant(cs, 18),
+            index: UInt32::allocate_constant(cs, 22),
+            rw_flag: Boolean::allocated_constant(cs, false),
+            is_ptr: Boolean::allocated_constant(cs, true),
+            value: UInt256::allocate_constant(cs, value),
+        };
+
+        let encoded = mem.encode(cs);
+        mem.value = UInt256::allocate_constant(cs, value.saturating_add(U256::one()));
+        let encoded2 = mem.encode(cs);
+
+        let variables_to_u64 = |variable_array: [Variable; 8]| {
+            variable_array.map(|x| cs.get_value(Place::from_variable(x)).wait().unwrap()[0].0)
+        };
+
+        let variables = variables_to_u64(encoded);
+        let variables2 = variables_to_u64(encoded2);
+
+        for i in 0..3 {
+            assert_eq!(variables[i], variables2[i]);
+        }
+        assert_ne!(variables[3], variables2[3]);
+        for i in 4..8 {
+            assert_eq!(variables[i], variables2[i]);
+        }
+    }
+}
