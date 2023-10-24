@@ -1,3 +1,15 @@
+//! Storage application circuit
+//!
+//! This circuit looks at all the storage writes, and verifies the final merkle tree root hash,
+//! and the hash of all storage diffs.
+//!
+//! It analyses the storage queue with writes, for each one checks that it is matching the witness
+//! merkle path. We use 256 deep merkle tree, with blake2 hashing.
+//! Additionally, it computes the StorageDiffs (which use enumeration index for compression - if we
+//! have written to this key in the past, rather than storing the key, we'll store only an index), and
+//! computes the keccak of the concatenation of all these storage diffs (which is later verified in L1
+//! contract).
+
 use std::collections::VecDeque;
 use std::mem::MaybeUninit;
 
@@ -717,4 +729,54 @@ where
     }
 
     input_commitment
+}
+
+#[cfg(test)]
+mod tests {
+    use boojum::{field::goldilocks::GoldilocksField, gadgets::traits::witnessable::CSWitnessable};
+
+    use crate::keccak256_round_function::NUM_U64_WORDS_PER_CYCLE;
+
+    use super::*;
+
+    #[test]
+    fn test_conditionally_increment() {
+        let mut owned_cs = test_utils::create_test_cs();
+
+        let cs = &mut owned_cs;
+
+        let mut test_increment = |low, high| {
+            let input = [
+                UInt32::allocate_constant(cs, low),
+                UInt32::allocate_constant(cs, high),
+            ];
+            let should_increment = Boolean::allocated_constant(cs, true);
+
+            let result = u64_as_u32x2_conditionally_increment(cs, &input, &should_increment);
+            (
+                result[0].get_witness(cs).wait().unwrap(),
+                result[1].get_witness(cs).wait().unwrap(),
+            )
+        };
+
+        assert_eq!(test_increment(1, 2), (2, 2));
+        assert_eq!(test_increment(2, 2), (3, 2));
+        assert_eq!(test_increment(u32::MAX, 0), (0, 1));
+    }
+
+    #[test]
+    #[should_panic(expected = "leads to overflow")]
+    fn test_overflow_increment() {
+        let mut owned_cs = test_utils::create_test_cs();
+
+        let cs = &mut owned_cs;
+
+        let input = [
+            UInt32::allocate_constant(cs, u32::MAX),
+            UInt32::allocate_constant(cs, u32::MAX),
+        ];
+        let should_increment = Boolean::allocated_constant(cs, true);
+
+        u64_as_u32x2_conditionally_increment(cs, &input, &should_increment);
+    }
 }

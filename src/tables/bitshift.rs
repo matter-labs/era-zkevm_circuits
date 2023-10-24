@@ -38,3 +38,51 @@ pub fn create_shift_to_num_converter_table<F: SmallField>() -> LookupTable<F, 3>
         1,
     )
 }
+
+#[cfg(test)]
+mod tests {
+    use boojum::field::goldilocks::GoldilocksField;
+
+    use super::*;
+
+    #[test]
+    fn test_bitshift_table() {
+        let table = create_shift_to_num_converter_table::<GoldilocksField>();
+
+        let do_lookup = |key| {
+            let (_position, result) =
+                table.lookup_value::<2>(&[GoldilocksField::from_nonreduced_u64(key)]);
+            result.iter().map(|x| x.0.clone()).collect::<Vec<u64>>()
+        };
+
+        // 1<<3, u256 is encoded in 8 elements.
+        assert_eq!(do_lookup(3), [8, 0]);
+        assert_eq!(do_lookup(256 + 3), [0, 0]);
+        assert_eq!(do_lookup(512 + 3), [0, 0]);
+        assert_eq!(do_lookup(768 + 3), [0, 0]);
+
+        // 1<<32
+        assert_eq!(do_lookup(32), [0, 1]);
+        assert_eq!(do_lookup(256 + 32), [0, 0]);
+        assert_eq!(do_lookup(512 + 32), [0, 0]);
+        assert_eq!(do_lookup(768 + 32), [0, 0]);
+
+        // 1<<33
+        assert_eq!(do_lookup(33), [0, 2]);
+        assert_eq!(do_lookup(256 + 33), [0, 0]);
+        assert_eq!(do_lookup(512 + 33), [0, 0]);
+        assert_eq!(do_lookup(768 + 33), [0, 0]);
+
+        // 1<<64
+        assert_eq!(do_lookup(64), [0, 0]);
+        assert_eq!(do_lookup(256 + 64), [1, 0]);
+        assert_eq!(do_lookup(512 + 64), [0, 0]);
+        assert_eq!(do_lookup(768 + 64), [0, 0]);
+
+        // 1<<255
+        assert_eq!(do_lookup(255), [0, 0]);
+        assert_eq!(do_lookup(256 + 255), [0, 0]);
+        assert_eq!(do_lookup(512 + 255), [0, 0]);
+        assert_eq!(do_lookup(768 + 255), [0, 1 << 31]);
+    }
+}

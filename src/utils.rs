@@ -6,6 +6,8 @@ use boojum::gadgets::queue::QueueTailState;
 use boojum::gadgets::traits::round_function::CircuitRoundFunction;
 use boojum::gadgets::u32::UInt32;
 
+/// Creates challenges (random values) from state (seed) based on the state of these 2 queues (unsorted and sorted).
+/// The first challenge from each repetition is 1 (TODO: check why..)
 pub fn produce_fs_challenges<
     F: SmallField,
     CS: ConstraintSystem<F>,
@@ -72,4 +74,56 @@ pub fn produce_fs_challenges<
     }
 
     result
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::test_utils::create_test_cs;
+    use boojum::field::goldilocks::GoldilocksField;
+    use boojum::field::Field;
+    use boojum::gadgets::traits::allocatable::CSPlaceholder;
+    use boojum::gadgets::traits::witnessable::WitnessHookable;
+    use boojum::implementations::poseidon2::Poseidon2Goldilocks;
+
+    use super::*;
+
+    #[test]
+    fn test_challenge_generation() {
+        let round_function = Poseidon2Goldilocks;
+
+        let mut owned_cs = create_test_cs();
+
+        let cs = &mut owned_cs;
+
+        // Generate challenges based on two queues (one empty, and one with 1 element).
+        let empty_queue: QueueTailState<GoldilocksField, 4> = QueueTailState::placeholder(cs);
+
+        let other_queue = QueueTailState {
+            tail: [Num::allocated_constant(cs, GoldilocksField::ONE); 4],
+            length: UInt32::allocated_constant(cs, 1),
+        };
+
+        let result = produce_fs_challenges::<_, _, _, 4, 10, 20>(
+            cs,
+            empty_queue,
+            other_queue,
+            &round_function,
+        );
+        // First element from each row should be equal to 1.
+        assert_eq!(result[0][0].witness_hook(cs)().unwrap(), 1);
+        assert_eq!(result[1][0].witness_hook(cs)().unwrap(), 1);
+        assert_eq!(result[5][5].witness_hook(cs)().unwrap(), 0x72210b7b6f52fc72);
+
+        // Result from arguments in different order, should create different challenges
+        let result = produce_fs_challenges::<_, _, _, 4, 10, 20>(
+            cs,
+            other_queue,
+            empty_queue,
+            &round_function,
+        );
+        // First element from each row should be equal to 1.
+        assert_eq!(result[0][0].witness_hook(cs)().unwrap(), 1);
+        assert_eq!(result[1][0].witness_hook(cs)().unwrap(), 1);
+        assert_eq!(result[5][5].witness_hook(cs)().unwrap(), 0x47aa7390d0f6fa01);
+    }
 }
