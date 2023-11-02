@@ -204,10 +204,8 @@ where
         let chunks = decompose_uint32_to_uint16s(cs, &hash.inner[7]);
 
         let version_hash_matches = UInt16::equals(cs, &chunks[1], &versioned_hash_top_16_bits);
-
-        state
-            .state_get_from_queue
-            .conditionally_enforce_true(cs, version_hash_matches);
+        // if we did get a fresh request from queue we expect it with a proper version bytes
+        version_hash_matches.conditionally_enforce_true(cs, state.state_get_from_queue);
 
         let uint_16_one = UInt16::allocated_constant(cs, 1);
         let length_in_words = chunks[0];

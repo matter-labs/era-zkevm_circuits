@@ -6,7 +6,7 @@ use crate::base_structures::vm_state::ArithmeticFlagsPort;
 use arrayvec::ArrayVec;
 use boojum::gadgets::u256::{decompose_u256_as_u32x8, UInt256};
 
-fn allocate_u256_from_limbs<F: SmallField>(limbs: &[F]) -> U256 {
+fn u256_from_limbs<F: SmallField>(limbs: &[F]) -> U256 {
     debug_assert_eq!(limbs.len(), 8);
 
     let mut byte_array = [0u8; 32];
@@ -27,8 +27,8 @@ pub fn allocate_mul_result_unchecked<F: SmallField, CS: ConstraintSystem<F>>(
 
     if <CS::Config as CSConfig>::WitnessConfig::EVALUATE_WITNESS {
         let value_fn = move |inputs: [F; 16]| {
-            let a = allocate_u256_from_limbs(&inputs[0..8]);
-            let b = allocate_u256_from_limbs(&inputs[8..16]);
+            let a = u256_from_limbs(&inputs[0..8]);
+            let b = u256_from_limbs(&inputs[8..16]);
             let mut c_bytes = [0u8; 64];
             a.full_mul(b).to_little_endian(&mut c_bytes[..]);
 
@@ -88,7 +88,9 @@ pub fn allocate_mul_result_unchecked<F: SmallField, CS: ConstraintSystem<F>>(
     (limbs_low, limbs_high)
 }
 
-pub fn allocate_div_result_unchecked<F: SmallField, CS: ConstraintSystem<F>>(
+// by convention this function set remainder to the dividend if divisor is 0 to satisfy
+// mul-div relation. Later in the code we set remainder to 0 in this case for convention
+pub(crate) fn allocate_div_result_unchecked<F: SmallField, CS: ConstraintSystem<F>>(
     cs: &mut CS,
     a: &[UInt32<F>; 8],
     b: &[UInt32<F>; 8],
@@ -98,11 +100,11 @@ pub fn allocate_div_result_unchecked<F: SmallField, CS: ConstraintSystem<F>>(
 
     if <CS::Config as CSConfig>::WitnessConfig::EVALUATE_WITNESS {
         let value_fn = move |inputs: [F; 16]| {
-            let a = allocate_u256_from_limbs(&inputs[0..8]);
-            let b = allocate_u256_from_limbs(&inputs[8..16]);
+            let a = u256_from_limbs(&inputs[0..8]);
+            let b = u256_from_limbs(&inputs[8..16]);
 
             let (quotient, remainder) = if b.is_zero() {
-                (U256::zero(), U256::zero())
+                (U256::zero(), a)
             } else {
                 a.div_mod(b)
             };
@@ -246,25 +248,30 @@ pub(crate) fn apply_mul_div<F: SmallField, CS: ConstraintSystem<F>>(
     //     }
     // }
 
-    let to_enforce_0 = UInt32::parallel_select(
+    // IMPORTANT: MulDiv relation is later enforced via `enforce_mul_relation` function, that effectively range-checks all the fields,
+    // so we do NOT need range checkes on anything that will go into MulDiv relation
+    let result_0 = UInt32::parallel_select(
         cs,
         should_apply_mul,
         &mul_low_unchecked,
         &quotient_unchecked,
     );
-    let result_0 = to_enforce_0.map(|el| UInt32::from_variable_checked(cs, el.get_variable()));
-    let to_enforce_1 = UInt32::parallel_select(
+    let result_1 = UInt32::parallel_select(
         cs,
         should_apply_mul,
         &mul_high_unchecked,
         &remainder_unchecked,
     );
-    let result_1 = to_enforce_1.map(|el| UInt32::from_variable_checked(cs, el.get_variable()));
+
+    // see below, but in short:
+    // - if we apply mul then `mul_low_unchecked` is checked as `mul_low_to_enforce`, and `mul_high_unchecked` as `mul_high_to_enforce`
+    // - if we apply div then `remainder_unchecked` is checked as `rem_to_enforce`, and `quotient_unchecked` as `a_to_enforce`
 
     // if we mull: src0 * src1 = mul_low + (mul_high << 256) => rem = 0, a = src0, b = src1, mul_low = mul_low, mul_high = mul_high
     // if we divide: src0 = q * src1 + rem =>                   rem = rem, a = quotient, b = src1, mul_low = src0, mul_high = 0
     let uint256_zero = UInt256::zero(cs);
 
+    // note that if we do division, then remainder is range-checked by "result_1" above
     let rem_to_enforce = UInt32::parallel_select(
         cs,
         should_apply_mul,
@@ -315,6 +322,9 @@ pub(crate) fn apply_mul_div<F: SmallField, CS: ConstraintSystem<F>>(
     let (subtraction_result_unchecked, remainder_is_less_than_divisor) =
         allocate_subtraction_result_unchecked(cs, &remainder_unchecked, src1_view);
 
+    // if we do division then remainder will be range checked, but not the subtraction result
+    let conditional_range_checks = subtraction_result_unchecked;
+
     // relation is a + b == c + of * 2^N,
     // but we compute d - e + 2^N * borrow = f
 
@@ -330,10 +340,11 @@ pub(crate) fn apply_mul_div<F: SmallField, CS: ConstraintSystem<F>>(
     // we require that remainder is < divisor
     remainder_is_less_than_divisor.conditionally_enforce_true(cs, divisor_is_non_zero);
 
-    // if divisor is 0, then we assume quotient and remainder to be 0
-
+    // if divisor is 0, then we assume quotient is zero
     quotient_is_zero.conditionally_enforce_true(cs, divisor_is_zero);
-    remainder_is_zero.conditionally_enforce_true(cs, divisor_is_zero);
+    // and by convention we set remainder to 0 if we divide by 0
+    let mask_remainder_into_zero = Boolean::multi_and(cs, &[should_apply_div, divisor_is_zero]);
+    let result_1 = result_1.map(|el| el.mask_negated(cs, mask_remainder_into_zero));
 
     let of_div = divisor_is_zero;
     let eq_div = {
@@ -386,6 +397,11 @@ pub(crate) fn apply_mul_div<F: SmallField, CS: ConstraintSystem<F>>(
     diffs_accumulator
         .flags
         .push((set_flags_and_execute, candidate_flags));
+
+    // add range check request. Even though it's only needed for division, it's always satisfiable
+    diffs_accumulator
+        .u32_conditional_range_checks
+        .push((apply_any, conditional_range_checks));
 
     let mut add_sub_relations = ArrayVec::new();
     add_sub_relations.push(addition_relation);

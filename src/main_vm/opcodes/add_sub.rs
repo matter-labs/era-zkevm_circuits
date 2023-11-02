@@ -49,13 +49,16 @@ pub(crate) fn apply_add_sub<F: SmallField, CS: ConstraintSystem<F>>(
         }
     }
 
-    let to_enforce = UInt32::<F>::parallel_select(
+    let result = UInt32::<F>::parallel_select(
         cs,
         apply_add,
         &addition_result_unchecked,
         &subtraction_result_unchecked,
     );
-    let result = to_enforce.map(|el| UInt32::from_variable_checked(cs, el.get_variable()));
+
+    // even though we will select for range check in final state diffs application, we already need a selection
+    // over result here, so we just add one conditional check
+    let conditional_range_checks = result;
 
     // now we need to enforce relation
     // we enforce a + b = c + 2^N * of,
@@ -149,6 +152,11 @@ pub(crate) fn apply_add_sub<F: SmallField, CS: ConstraintSystem<F>>(
     diffs_accumulator
         .flags
         .push((update_flags, candidate_flags));
+
+    // add range check request
+    diffs_accumulator
+        .u32_conditional_range_checks
+        .push((apply_any, conditional_range_checks));
 
     let mut add_sub_relations = ArrayVec::new();
     add_sub_relations.push(relation);

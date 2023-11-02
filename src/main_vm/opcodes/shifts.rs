@@ -79,7 +79,7 @@ pub(crate) fn apply_shifts<F: SmallField, CS: ConstraintSystem<F>>(
         let x = is_cyclic.negated(cs);
         is_right.and(cs, x)
     };
-    let (rshift_q, _rshift_r) = allocate_div_result_unchecked(cs, &reg, &full_shift_limbs);
+    let (rshift_q, rshift_r) = allocate_div_result_unchecked(cs, &reg, &full_shift_limbs);
 
     let apply_left_shift = {
         let x = is_right_shift.negated(cs);
@@ -87,13 +87,17 @@ pub(crate) fn apply_shifts<F: SmallField, CS: ConstraintSystem<F>>(
     };
     let (lshift_low, lshift_high) = allocate_mul_result_unchecked(cs, &reg, &full_shift_limbs);
 
+    // see description of MulDivRelation to range checks in mul_div.rs, but in short:
+    // - if we shift right then `rshift_q`` is checked as `a_to_enforce`, `rshift_r` is checked as `rem_to_enforce`
+    // - if we shift left then `lshift_low` is checked as `mul_low_to_enforce` and `lshift_high` as `mul_high_to_enforce`
+
     // actual enforcement:
     // for left_shift: a = reg, b = full_shuft, remainder = 0, high = lshift_high, low = lshift_low
     // for right_shift : a = rshift_q, b = full_shift, remainder = rshift_r, high = 0, low = reg
     let uint256_zero = UInt256::zero(cs);
 
     let rem_to_enforce =
-        UInt32::parallel_select(cs, apply_left_shift, &uint256_zero.inner, &_rshift_r);
+        UInt32::parallel_select(cs, apply_left_shift, &uint256_zero.inner, &rshift_r);
     let a_to_enforce = UInt32::parallel_select(cs, apply_left_shift, reg, &rshift_q);
     let b_to_enforce = full_shift_limbs;
     let mul_low_to_enforce = UInt32::parallel_select(cs, apply_left_shift, &lshift_low, reg);
@@ -106,6 +110,27 @@ pub(crate) fn apply_shifts<F: SmallField, CS: ConstraintSystem<F>>(
         rem: rem_to_enforce,
         mul_low: mul_low_to_enforce,
         mul_high: mul_high_to_enforce,
+    };
+
+    // but since we can do division, we need to check that remainder < divisor. We also know that divisor != 0, so no
+    // extra checks are necessary
+    let (subtraction_result_unchecked, remainder_is_less_than_divisor) =
+        allocate_subtraction_result_unchecked(cs, &rshift_r, &full_shift_limbs);
+
+    remainder_is_less_than_divisor.conditionally_enforce_true(cs, is_right_shift);
+
+    // if we do division then remainder will be range checked, but not the subtraction result
+    let conditional_range_checks = subtraction_result_unchecked;
+
+    // relation is a + b == c + of * 2^N,
+    // but we compute d - e + 2^N * borrow = f
+
+    // so we need to shuffle
+    let addition_relation = AddSubRelation {
+        a: full_shift_limbs,
+        b: subtraction_result_unchecked,
+        c: rshift_r,
+        of: remainder_is_less_than_divisor,
     };
 
     let temp_result = UInt32::parallel_select(cs, is_right_shift, &rshift_q, &lshift_low);
@@ -153,6 +178,17 @@ pub(crate) fn apply_shifts<F: SmallField, CS: ConstraintSystem<F>>(
     diffs_accumulator
         .flags
         .push((set_flags_and_execute, new_flag_port));
+
+    // add range check request
+    diffs_accumulator
+        .u32_conditional_range_checks
+        .push((should_apply, conditional_range_checks));
+
+    let mut add_sub_relations = ArrayVec::new();
+    add_sub_relations.push(addition_relation);
+    diffs_accumulator
+        .add_sub_relations
+        .push((should_apply, add_sub_relations));
 
     let mut mul_div_relations = ArrayVec::new();
     mul_div_relations.push(mul_relation);

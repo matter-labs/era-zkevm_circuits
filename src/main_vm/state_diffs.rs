@@ -13,6 +13,7 @@ use boojum::gadgets::{boolean::Boolean, u16::UInt16, u32::UInt32};
 use crate::main_vm::opcodes::{AddSubRelation, MulDivRelation};
 
 pub(crate) const MAX_SPONGES_PER_CYCLE: usize = 8;
+pub(crate) const MAX_U32_CONDITIONAL_RANGE_CHECKS_PER_CYCLE: usize = 8;
 pub(crate) const MAX_ADD_SUB_RELATIONS_PER_CYCLE: usize = 1;
 pub(crate) const MAX_MUL_DIV_RELATIONS_PER_CYCLE: usize = 3;
 
@@ -79,6 +80,11 @@ pub struct StateDiffsAccumulator<F: SmallField> {
             ),
             MAX_SPONGES_PER_CYCLE,
         >,
+    )>,
+    // conditional range checks to enforce
+    pub u32_conditional_range_checks: Vec<(
+        Boolean<F>,
+        [UInt32<F>; MAX_U32_CONDITIONAL_RANGE_CHECKS_PER_CYCLE], // at the moment we only have one
     )>,
     // add/sub relations to enforce
     pub add_sub_relations: Vec<(

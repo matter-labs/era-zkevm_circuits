@@ -615,8 +615,20 @@ where
     let new_pending_exception = Boolean::multi_or(cs, &diffs_accumulator.pending_exceptions);
     new_state.pending_exception = new_pending_exception;
 
-    // add/sub relations
+    // conditional u32 range checks. All of those are of the fixed length per opcode, so we just select
+    {
+        let (_, mut to_enforce) = diffs_accumulator
+            .u32_conditional_range_checks
+            .pop()
+            .unwrap();
+        for (applies, candidate) in diffs_accumulator.u32_conditional_range_checks.drain(..) {
+            to_enforce = UInt32::parallel_select(cs, applies, &candidate, &to_enforce);
+        }
 
+        let _ = to_enforce.map(|el| UInt32::from_variable_checked(cs, el.get_variable()));
+    }
+
+    // add/sub relations
     let cap = diffs_accumulator.add_sub_relations.len();
     for _ in 0..MAX_ADD_SUB_RELATIONS_PER_CYCLE {
         let mut relations = Vec::with_capacity(cap);

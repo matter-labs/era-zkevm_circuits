@@ -288,7 +288,7 @@ pub(crate) fn apply_uma<
     // we read twice
 
     let oracle = witness_oracle.clone();
-    let memory_value_a = MemoryValue::allocate_from_closure_and_dependencies_non_pointer(
+    let mut memory_value_a = MemoryValue::allocate_from_closure_and_dependencies_non_pointer(
         cs,
         move |inputs: &[F]| {
             debug_assert_eq!(inputs.len(), 4);
@@ -317,9 +317,11 @@ pub(crate) fn apply_uma<
             should_read_a_cell.get_variable().into(),
         ],
     );
+    // if we would not need to read we mask it into 0. We do not care about pointer part as we set constant "false" below
+    memory_value_a.value = memory_value_a.value.mask(cs, should_read_a_cell);
 
     let oracle = witness_oracle.clone();
-    let memory_value_b = MemoryValue::allocate_from_closure_and_dependencies_non_pointer(
+    let mut memory_value_b = MemoryValue::allocate_from_closure_and_dependencies_non_pointer(
         cs,
         move |inputs: &[F]| {
             debug_assert_eq!(inputs.len(), 5);
@@ -351,6 +353,8 @@ pub(crate) fn apply_uma<
             memory_value_a.value.inner[0].get_variable().into(),
         ],
     );
+    // if we would not need to read we mask it into 0. We do not care about pointer part as we set constant "false" below
+    memory_value_b.value = memory_value_b.value.mask(cs, should_read_b_cell);
 
     // now we can update the memory queue state
 

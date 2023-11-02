@@ -2,6 +2,7 @@ use super::*;
 
 use crate::base_structures::log_query::LOG_QUERY_PACKED_WIDTH;
 use crate::fsm_input_output::ClosedFormInputCompactForm;
+use crate::utils::accumulate_grand_products;
 
 use boojum::cs::{gates::*, traits::cs::ConstraintSystem};
 use boojum::field::SmallField;
@@ -256,6 +257,7 @@ pub fn sort_and_deduplicate_code_decommittments_inner<
 )
 where
     [(); <DecommitQuery<F> as CSAllocatableExt<F>>::INTERNAL_STRUCT_LEN]:,
+    [(); DECOMMIT_QUERY_PACKED_WIDTH + 1]:,
 {
     assert!(limit <= u32::MAX as usize);
     let unsorted_queue_length = Num::from_variable(original_queue.length.get_variable());
@@ -285,44 +287,21 @@ where
         let (sorted_item, sorted_encoding) = sorted_queue.pop_front(cs, should_pop);
 
         // we make encoding that is the same as defined for timestamped item
-        assert_eq!(original_encoding.len(), sorted_encoding.len());
-        assert_eq!(lhs.len(), rhs.len());
-
-        for ((challenges, lhs), rhs) in fs_challenges.iter().zip(lhs.iter_mut()).zip(rhs.iter_mut())
-        {
-            let mut lhs_contribution = challenges[DECOMMIT_QUERY_PACKED_WIDTH];
-            let mut rhs_contribution = challenges[DECOMMIT_QUERY_PACKED_WIDTH];
-
-            for ((original_el, sorted_el), challenge) in original_encoding
-                .iter()
-                .zip(sorted_encoding.iter())
-                .zip(challenges.iter())
-            {
-                lhs_contribution = Num::fma(
-                    cs,
-                    &Num::from_variable(*original_el),
-                    challenge,
-                    &F::ONE,
-                    &lhs_contribution,
-                    &F::ONE,
-                );
-
-                rhs_contribution = Num::fma(
-                    cs,
-                    &Num::from_variable(*sorted_el),
-                    challenge,
-                    &F::ONE,
-                    &rhs_contribution,
-                    &F::ONE,
-                );
-            }
-
-            let new_lhs = lhs.mul(cs, &lhs_contribution);
-            let new_rhs = rhs.mul(cs, &rhs_contribution);
-
-            *lhs = Num::conditionally_select(cs, should_pop, &new_lhs, &lhs);
-            *rhs = Num::conditionally_select(cs, should_pop, &new_rhs, &rhs);
-        }
+        accumulate_grand_products::<
+            F,
+            CS,
+            DECOMMIT_QUERY_PACKED_WIDTH,
+            { DECOMMIT_QUERY_PACKED_WIDTH + 1 },
+            DEFAULT_NUM_PERMUTATION_ARGUMENT_REPETITIONS,
+        >(
+            cs,
+            &mut lhs,
+            &mut rhs,
+            &fs_challenges,
+            &original_encoding,
+            &sorted_encoding,
+            should_pop,
+        );
 
         // check if keys are equal and check a value
         let packed_key = concatenate_key(cs, (sorted_item.timestamp, sorted_item.code_hash));

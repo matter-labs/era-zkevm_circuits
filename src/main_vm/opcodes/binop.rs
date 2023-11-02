@@ -173,9 +173,8 @@ fn get_binop_subresults<F: SmallField, CS: ConstraintSystem<F>>(
         cs.set_values_with_dependencies(&dependencies, &outputs, value_fn);
     }
 
-    // lookup more
-
-    for source_set in all_results.array_chunks::<3>() {
+    // lookup more, but this time using a table as a range check for all the and/or/xor chunks
+    for source_set in all_results.array_chunks::<2>() {
         // value is irrelevant, it's just a range check
         let _: [Variable; 1] = cs.perform_lookup::<2, 1>(table_id, &[source_set[0], source_set[1]]);
     }
