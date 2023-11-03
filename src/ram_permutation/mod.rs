@@ -15,6 +15,7 @@ use crate::fsm_input_output::circuit_inputs::INPUT_OUTPUT_COMMITMENT_LENGTH;
 use crate::fsm_input_output::commit_variable_length_encodable_item;
 use crate::fsm_input_output::ClosedFormInputCompactForm;
 use crate::storage_validity_by_grand_product::unpacked_long_comparison;
+use crate::utils::accumulate_grand_products;
 use boojum::algebraic_props::round_function::AlgebraicRoundFunction;
 use boojum::cs::gates::PublicInputGate;
 use boojum::gadgets::queue::full_state_queue::FullStateCircuitQueueWitness;
@@ -229,6 +230,8 @@ pub fn partial_accumulate_inner<
     limit: usize,
 ) where
     [(); <MemoryQuery<F> as CSAllocatableExt<F>>::INTERNAL_STRUCT_LEN]:,
+    [(); MEMORY_QUERY_PACKED_WIDTH]:,
+    [(); MEMORY_QUERY_PACKED_WIDTH + 1]:,
 {
     let not_start = is_start.negated(cs);
     Num::enforce_equal(
@@ -360,50 +363,21 @@ pub fn partial_accumulate_inner<
         }
 
         // if we did pop then accumulate to grand product
-        for ((challenges, lhs), rhs) in fs_challenges.iter().zip(lhs.iter_mut()).zip(rhs.iter_mut())
-        {
-            // additive parts
-            let mut lhs_contribution = challenges[MEMORY_QUERY_PACKED_WIDTH];
-            let mut rhs_contribution = challenges[MEMORY_QUERY_PACKED_WIDTH];
-
-            debug_assert_eq!(unsorted_item_encoding.len(), sorted_item_encoding.len());
-            debug_assert_eq!(
-                unsorted_item_encoding.len(),
-                challenges[..MEMORY_QUERY_PACKED_WIDTH].len()
-            );
-
-            for ((unsorted_contribution, sorted_contribution), challenge) in unsorted_item_encoding
-                .iter()
-                .zip(sorted_item_encoding.iter())
-                .zip(challenges[..MEMORY_QUERY_PACKED_WIDTH].iter())
-            {
-                let new_lhs = Num::fma(
-                    cs,
-                    &Num::from_variable(*unsorted_contribution),
-                    challenge,
-                    &F::ONE,
-                    &lhs_contribution,
-                    &F::ONE,
-                );
-                lhs_contribution = new_lhs;
-
-                let new_rhs = Num::fma(
-                    cs,
-                    &Num::from_variable(*sorted_contribution),
-                    challenge,
-                    &F::ONE,
-                    &rhs_contribution,
-                    &F::ONE,
-                );
-                rhs_contribution = new_rhs;
-            }
-
-            let new_lhs = lhs.mul(cs, &lhs_contribution);
-            let new_rhs = rhs.mul(cs, &rhs_contribution);
-
-            *lhs = Num::conditionally_select(cs, can_pop, &new_lhs, &lhs);
-            *rhs = Num::conditionally_select(cs, can_pop, &new_rhs, &rhs);
-        }
+        accumulate_grand_products::<
+            F,
+            CS,
+            MEMORY_QUERY_PACKED_WIDTH,
+            { MEMORY_QUERY_PACKED_WIDTH + 1 },
+            DEFAULT_NUM_PERMUTATION_ARGUMENT_REPETITIONS,
+        >(
+            cs,
+            lhs,
+            rhs,
+            fs_challenges,
+            &unsorted_item_encoding,
+            &sorted_item_encoding,
+            can_pop,
+        );
     }
 }
 

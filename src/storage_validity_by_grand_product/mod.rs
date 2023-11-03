@@ -39,6 +39,8 @@ use crate::{
     storage_validity_by_grand_product::input::*,
 };
 
+use crate::utils::accumulate_grand_products;
+
 // we make a generation aware memory that store all the old and new values
 // for a current storage cell. There are largely 3 possible sequences that we must be aware of
 // - write_0, .. .... without rollback of the current write
@@ -574,15 +576,10 @@ where
     let no_work = original_queue.is_empty(cs);
     let mut previous_item_is_trivial = no_work.or(cs, is_start);
 
-    let additive_parts = fs_challenges.map(|el| el.last().copied().expect("additive part"));
-
     // we simultaneously pop, accumulate partial product,
     // and decide whether or not we should move to the next cell
 
-    // to ensure uniqueness we place timestamps in a addition to the
-
-    let mut lhs_lc = Vec::with_capacity(TIMESTAMPED_STORAGE_LOG_ENCODING_LEN + 1);
-    let mut rhs_lc = Vec::with_capacity(TIMESTAMPED_STORAGE_LOG_ENCODING_LEN + 1);
+    // to ensure uniqueness we place timestamps in a addition to the original values encoding access location
 
     for _cycle in 0..limit {
         let original_timestamp = cycle_idx;
@@ -616,54 +613,21 @@ where
             UInt8::equals(cs, &shard_id_to_process, &sorted_item.record.shard_id);
         shard_id_is_valid.conditionally_enforce_true(cs, should_pop);
 
-        assert_eq!(extended_original_encoding.len(), sorted_encoding.len());
-        for challenges in fs_challenges {
-            assert_eq!(extended_original_encoding.len(), challenges.len() - 1);
-        }
-
-        // accumulate into product
-        let extended_original_encoding = extended_original_encoding
-            .iter()
-            .map(|v| Num::from_variable(*v))
-            .collect::<Vec<Num<F>>>();
-        let sorted_encoding = sorted_encoding
-            .iter()
-            .map(|v| Num::from_variable(*v))
-            .collect::<Vec<Num<F>>>();
-
-        for (((lhs_dst, rhs_dst), challenges), additive_part) in lhs
-            .iter_mut()
-            .zip(rhs.iter_mut())
-            .zip(fs_challenges.iter())
-            .zip(additive_parts.iter())
-        {
-            lhs_lc.clear();
-            rhs_lc.clear();
-
-            for ((original_el, sorted_el), challenge) in extended_original_encoding
-                .iter()
-                .zip(sorted_encoding.iter())
-                .zip(challenges.iter())
-            {
-                let lhs_contribution = original_el.mul(cs, &challenge);
-                let rhs_contribution = sorted_el.mul(cs, &challenge);
-
-                lhs_lc.push((lhs_contribution.get_variable(), F::ONE));
-                rhs_lc.push((rhs_contribution.get_variable(), F::ONE));
-            }
-
-            lhs_lc.push((additive_part.get_variable(), F::ONE));
-            rhs_lc.push((additive_part.get_variable(), F::ONE));
-
-            let lhs_lc = Num::linear_combination(cs, &lhs_lc);
-            let rhs_lc = Num::linear_combination(cs, &rhs_lc);
-
-            let lhs_candidate = lhs_dst.mul(cs, &lhs_lc);
-            let rhs_candidate = rhs_dst.mul(cs, &rhs_lc);
-
-            *lhs_dst = Num::conditionally_select(cs, should_pop, &lhs_candidate, &*lhs_dst);
-            *rhs_dst = Num::conditionally_select(cs, should_pop, &rhs_candidate, &*rhs_dst);
-        }
+        accumulate_grand_products::<
+            F,
+            CS,
+            TIMESTAMPED_STORAGE_LOG_ENCODING_LEN,
+            { TIMESTAMPED_STORAGE_LOG_ENCODING_LEN + 1 },
+            DEFAULT_NUM_PERMUTATION_ARGUMENT_REPETITIONS,
+        >(
+            cs,
+            &mut lhs,
+            &mut rhs,
+            &fs_challenges,
+            &extended_original_encoding,
+            &sorted_encoding,
+            should_pop,
+        );
 
         let TimestampedStorageLogRecord { record, timestamp } = sorted_item;
 

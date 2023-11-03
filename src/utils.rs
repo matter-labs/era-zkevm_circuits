@@ -1,9 +1,12 @@
 use boojum::algebraic_props::round_function::AlgebraicRoundFunction;
 use boojum::cs::traits::cs::ConstraintSystem;
+use boojum::cs::Variable;
 use boojum::field::SmallField;
+use boojum::gadgets::boolean::Boolean;
 use boojum::gadgets::num::Num;
 use boojum::gadgets::queue::QueueTailState;
 use boojum::gadgets::traits::round_function::CircuitRoundFunction;
+use boojum::gadgets::traits::selectable::Selectable;
 use boojum::gadgets::u32::UInt32;
 
 pub fn produce_fs_challenges<
@@ -72,4 +75,63 @@ pub fn produce_fs_challenges<
     }
 
     result
+}
+
+// Strange signature of the function is due to const generics bugs
+pub fn accumulate_grand_products<
+    F: SmallField,
+    CS: ConstraintSystem<F>,
+    const ENCODING_LENGTH: usize,
+    const NUM_CHALLENGES: usize,
+    const NUM_REPETITIONS: usize,
+>(
+    cs: &mut CS,
+    lhs_accumulator: &mut [Num<F>; NUM_REPETITIONS],
+    rhs_accumulator: &mut [Num<F>; NUM_REPETITIONS],
+    fs_challenges: &[[Num<F>; NUM_CHALLENGES]; NUM_REPETITIONS],
+    lhs_encoding: &[Variable; ENCODING_LENGTH],
+    rhs_encoding: &[Variable; ENCODING_LENGTH],
+    should_accumulate: Boolean<F>,
+) {
+    assert!(ENCODING_LENGTH > 0);
+    assert_eq!(ENCODING_LENGTH + 1, NUM_CHALLENGES);
+    for ((challenges, lhs), rhs) in fs_challenges
+        .iter()
+        .zip(lhs_accumulator.iter_mut())
+        .zip(rhs_accumulator.iter_mut())
+    {
+        // additive parts
+        let mut lhs_contribution = challenges[ENCODING_LENGTH];
+        let mut rhs_contribution = challenges[ENCODING_LENGTH];
+
+        for ((lhs_el, rhs_el), challenge) in lhs_encoding
+            .iter()
+            .zip(rhs_encoding.iter())
+            .zip(challenges.iter())
+        {
+            lhs_contribution = Num::fma(
+                cs,
+                &Num::from_variable(*lhs_el),
+                challenge,
+                &F::ONE,
+                &lhs_contribution,
+                &F::ONE,
+            );
+
+            rhs_contribution = Num::fma(
+                cs,
+                &Num::from_variable(*rhs_el),
+                challenge,
+                &F::ONE,
+                &rhs_contribution,
+                &F::ONE,
+            );
+        }
+
+        let new_lhs = lhs.mul(cs, &lhs_contribution);
+        let new_rhs = rhs.mul(cs, &rhs_contribution);
+
+        *lhs = Num::conditionally_select(cs, should_accumulate, &new_lhs, &lhs);
+        *rhs = Num::conditionally_select(cs, should_accumulate, &new_rhs, &rhs);
+    }
 }

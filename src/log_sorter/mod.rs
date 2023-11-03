@@ -6,6 +6,7 @@ use crate::base_structures::vm_state::*;
 use crate::fsm_input_output::circuit_inputs::INPUT_OUTPUT_COMMITMENT_LENGTH;
 use crate::fsm_input_output::{commit_variable_length_encodable_item, ClosedFormInputCompactForm};
 use crate::storage_validity_by_grand_product::unpacked_long_comparison;
+use crate::utils::accumulate_grand_products;
 use boojum::cs::{gates::*, traits::cs::ConstraintSystem};
 use boojum::field::SmallField;
 use boojum::gadgets::traits::round_function::CircuitRoundFunction;
@@ -115,7 +116,7 @@ where
         CS,
         R,
         QUEUE_STATE_WIDTH,
-        { MEMORY_QUERY_PACKED_WIDTH + 1 },
+        { LOG_QUERY_PACKED_WIDTH + 1 },
         DEFAULT_NUM_PERMUTATION_ARGUMENT_REPETITIONS,
     >(
         cs,
@@ -215,10 +216,12 @@ where
 
     structured_input.hidden_fsm_output.final_result_queue_state = final_sorted_queue.into_state();
 
+    // self-check
+    structured_input.hook_compare_witness(cs, &closed_form_input);
+
     let compact_form =
         ClosedFormInputCompactForm::from_full_form(cs, &structured_input, round_function);
 
-    // dbg!(compact_form.create_witness());
     let input_commitment = commit_variable_length_encodable_item(cs, &compact_form, round_function);
     for el in input_commitment.iter() {
         let gate = PublicInputGate::new(el.get_variable());
@@ -227,7 +230,7 @@ where
 
     input_commitment
 }
-use crate::base_structures::memory_query::MEMORY_QUERY_PACKED_WIDTH;
+
 pub fn repack_and_prove_events_rollbacks_inner<
     F: SmallField,
     CS: ConstraintSystem<F>,
@@ -240,7 +243,7 @@ pub fn repack_and_prove_events_rollbacks_inner<
     intermediate_sorted_queue: &mut StorageLogQueue<F, R>,
     result_queue: &mut StorageLogQueue<F, R>,
     is_start: Boolean<F>,
-    fs_challenges: [[Num<F>; MEMORY_QUERY_PACKED_WIDTH + 1];
+    fs_challenges: [[Num<F>; LOG_QUERY_PACKED_WIDTH + 1];
         DEFAULT_NUM_PERMUTATION_ARGUMENT_REPETITIONS],
     mut previous_key: UInt32<F>,
     mut previous_item: LogQuery<F>,
@@ -259,6 +262,9 @@ where
     // we can recreate it here, there are two cases:
     // - we are 100% empty, but it's the only circuit in this case
     // - otherwise we continue, and then it's not trivial
+
+    // NOTE: scheduler guarantees that only 1 - the first - circuit will have "is_start",
+    // so to take a shortcut we can only need to test if there is nothing in the queue
     let no_work = unsorted_queue.is_empty(cs);
     let mut previous_is_trivial = Boolean::multi_or(cs, &[no_work, is_start]);
 
@@ -282,52 +288,30 @@ where
         let should_pop = original_is_empty.negated(cs);
         let is_trivial = original_is_empty;
 
-        let (_, original_encoding) = unsorted_queue.pop_front(cs, should_pop);
+        let (unsorted_item, original_encoding) = unsorted_queue.pop_front(cs, should_pop);
         let (sorted_item, sorted_encoding) = intermediate_sorted_queue.pop_front(cs, should_pop);
 
-        // we also ensure that items are "write" unless it's a padding
-        sorted_item
+        // we also ensure that original items are "write" unless it's a padding
+        unsorted_item
             .rw_flag
             .conditionally_enforce_true(cs, should_pop);
 
-        assert_eq!(original_encoding.len(), sorted_encoding.len());
-        assert_eq!(lhs.len(), rhs.len());
-        for ((challenges, lhs), rhs) in fs_challenges.iter().zip(lhs.iter_mut()).zip(rhs.iter_mut())
-        {
-            // additive parts
-            let mut lhs_contribution = challenges[MEMORY_QUERY_PACKED_WIDTH];
-            let mut rhs_contribution = challenges[MEMORY_QUERY_PACKED_WIDTH];
+        accumulate_grand_products::<
+            F,
+            CS,
+            LOG_QUERY_PACKED_WIDTH,
+            { LOG_QUERY_PACKED_WIDTH + 1 },
+            DEFAULT_NUM_PERMUTATION_ARGUMENT_REPETITIONS,
+        >(
+            cs,
+            &mut lhs,
+            &mut rhs,
+            &fs_challenges,
+            &original_encoding,
+            &sorted_encoding,
+            should_pop,
+        );
 
-            for ((original_el, sorted_el), challenge) in original_encoding
-                .iter()
-                .zip(sorted_encoding.iter())
-                .zip(challenges.iter())
-            {
-                lhs_contribution = Num::fma(
-                    cs,
-                    &Num::from_variable(*original_el),
-                    challenge,
-                    &F::ONE,
-                    &lhs_contribution,
-                    &F::ONE,
-                );
-
-                rhs_contribution = Num::fma(
-                    cs,
-                    &Num::from_variable(*sorted_el),
-                    challenge,
-                    &F::ONE,
-                    &rhs_contribution,
-                    &F::ONE,
-                );
-            }
-
-            let new_lhs = lhs.mul(cs, &lhs_contribution);
-            let new_rhs = rhs.mul(cs, &rhs_contribution);
-
-            *lhs = Num::conditionally_select(cs, should_pop, &new_lhs, &lhs);
-            *rhs = Num::conditionally_select(cs, should_pop, &new_rhs, &rhs);
-        }
         // now ensure sorting
         {
             // sanity check - all such logs are "write into the sky"
@@ -346,57 +330,52 @@ where
             let (keys_are_equal, new_key_is_smaller) =
                 unpacked_long_comparison(cs, &[previous_key], &[sorting_key]);
 
-            // keys are always ordered no matter what, and are never equal unless it's padding
+            // keys are always ordered as >= unless is padding
             new_key_is_smaller.conditionally_enforce_false(cs, should_pop);
 
-            // there are only two cases when keys are equal:
-            // - it's a padding element
-            // - it's a rollback
+            let same_log = keys_are_equal;
+            let same_nontrivial_log = Boolean::multi_and(cs, &[should_pop, same_log]);
+            let may_be_different_log = same_log.negated(cs);
+            let different_nontrivial_log =
+                Boolean::multi_and(cs, &[should_pop, may_be_different_log]);
 
-            // it's enough to compare timestamps as VM circuit guarantees uniqueness of the if it's not a padding
-            let previous_is_not_rollback = previous_item.rollback.negated(cs);
-            let enforce_sequential_rollback = Boolean::multi_and(
-                cs,
-                &[previous_is_not_rollback, sorted_item.rollback, should_pop],
-            );
-            keys_are_equal.conditionally_enforce_true(cs, enforce_sequential_rollback);
+            // if we pop an item and it's not trivial with different log, then it MUST be non-rollback
+            let this_item_is_not_rollback = sorted_item.rollback.negated(cs);
+            this_item_is_not_rollback.conditionally_enforce_true(cs, different_nontrivial_log);
 
-            let same_log = UInt32::equals(cs, &sorted_item.timestamp, &previous_item.timestamp);
+            // if it's same non-trivial log, then previous one is always guaranteed to be not-rollback by line above,
+            // and so this one should be rollback
+            sorted_item
+                .rollback
+                .conditionally_enforce_true(cs, same_nontrivial_log);
 
+            // we self-check ourselves over the content of the log, even though by the construction
+            // of the queue it's a guaranteed permutation
+            let keys_are_equal = UInt256::equals(cs, &sorted_item.key, &previous_item.key);
             let values_are_equal =
                 UInt256::equals(cs, &sorted_item.written_value, &previous_item.written_value);
+            let same_body = Boolean::multi_and(cs, &[keys_are_equal, values_are_equal]);
 
-            let negate_previous_is_trivial = previous_is_trivial.negated(cs);
-            let should_enforce = Boolean::multi_and(cs, &[same_log, negate_previous_is_trivial]);
+            // if previous is not trivial then we always have equal content
+            let previous_is_non_trivial = previous_is_trivial.negated(cs);
+            let should_enforce = Boolean::multi_and(cs, &[same_log, previous_is_non_trivial]);
 
-            values_are_equal.conditionally_enforce_true(cs, should_enforce);
+            same_body.conditionally_enforce_true(cs, should_enforce);
 
-            let this_item_is_non_trivial_rollback =
-                Boolean::multi_and(cs, &[sorted_item.rollback, should_pop]);
-            let negate_previous_item_rollback = previous_item.rollback.negated(cs);
-            let prevous_item_is_non_trivial_write = Boolean::multi_and(
-                cs,
-                &[negate_previous_item_rollback, negate_previous_is_trivial],
-            );
-            let is_sequential_rollback = Boolean::multi_and(
-                cs,
-                &[
-                    this_item_is_non_trivial_rollback,
-                    prevous_item_is_non_trivial_write,
-                ],
-            );
-            same_log.conditionally_enforce_true(cs, is_sequential_rollback);
+            let previous_item_is_not_rollback = previous_item.rollback.negated(cs);
 
             // decide if we should add the PREVIOUS into the queue
-            // We add only if previous one is not trivial,
-            // and it had a different key, and it wasn't rolled back
-            let negate_same_log = same_log.and(cs, should_pop).negated(cs);
+            // We add only if previous one is not trivial, and current one doesn't rollback it due to different timestamp,
+            // OR if current one is trivial
+
+            let maybe_add_to_queue = may_be_different_log.or(cs, is_trivial);
+
             let add_to_the_queue = Boolean::multi_and(
                 cs,
                 &[
-                    negate_previous_is_trivial,
-                    negate_same_log,
-                    negate_previous_item_rollback,
+                    previous_is_non_trivial,
+                    maybe_add_to_queue,
+                    previous_item_is_not_rollback,
                 ],
             );
             let boolean_false = Boolean::allocated_constant(cs, false);
@@ -427,13 +406,13 @@ where
     {
         let now_empty = unsorted_queue.is_empty(cs);
 
-        let negate_previous_is_trivial = previous_is_trivial.negated(cs);
-        let negate_previous_item_rollback = previous_item.rollback.negated(cs);
+        let previous_is_non_trivial = previous_is_trivial.negated(cs);
+        let previous_item_is_not_rollback = previous_item.rollback.negated(cs);
         let add_to_the_queue = Boolean::multi_and(
             cs,
             &[
-                negate_previous_is_trivial,
-                negate_previous_item_rollback,
+                previous_is_non_trivial,
+                previous_item_is_not_rollback,
                 now_empty,
             ],
         );
@@ -622,7 +601,7 @@ mod tests {
             _,
             Poseidon2Goldilocks,
             QUEUE_STATE_WIDTH,
-            { MEMORY_QUERY_PACKED_WIDTH + 1 },
+            { LOG_QUERY_PACKED_WIDTH + 1 },
             DEFAULT_NUM_PERMUTATION_ARGUMENT_REPETITIONS,
         >(
             cs,

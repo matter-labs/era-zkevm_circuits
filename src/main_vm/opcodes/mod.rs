@@ -3,7 +3,9 @@ use crate::base_structures::vm_state::VmLocalState;
 use crate::main_vm::opcode_bitmask::SUPPORTED_ISA_VERSION;
 use crate::main_vm::pre_state::AfterDecodingCarryParts;
 use crate::main_vm::pre_state::CommonOpcodeState;
-use crate::main_vm::state_diffs::StateDiffsAccumulator;
+use crate::main_vm::state_diffs::{
+    StateDiffsAccumulator, MAX_U32_CONDITIONAL_RANGE_CHECKS_PER_CYCLE,
+};
 use boojum::cs::gates::U8x4FMAGate;
 use zkevm_opcode_defs::*;
 
@@ -122,6 +124,8 @@ pub(crate) fn enforce_addition_relation<F: SmallField, CS: ConstraintSystem<F>>(
     }
 }
 
+// NOTE: fields `a`, `b` and `rem` will be range checked, and fields `mul_low` and `mul_high` are used
+// only for equality check with guaranteed 32-bit results, so they are also range checked
 pub(crate) fn enforce_mul_relation<F: SmallField, CS: ConstraintSystem<F>>(
     cs: &mut CS,
     relation: MulDivRelation<F>,
