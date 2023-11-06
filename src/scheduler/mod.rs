@@ -663,6 +663,8 @@ pub fn scheduler_function<
     let mut recursive_queue_state_tails =
         [empty_recursive_queue_state_tail; NUM_CIRCUIT_TYPES_TO_SCHEDULE];
 
+    let mut hidden_fsm_input_to_use = [zero_num; CLOSED_FORM_COMMITTMENT_LENGTH];
+
     for _idx in 0..config.capacity {
         let mut next_mask = [boolean_false; NUM_CIRCUIT_TYPES_TO_SCHEDULE];
 
@@ -703,16 +705,15 @@ pub fn scheduler_function<
                 Boolean::multi_and(cs, &[*stage_flag, execution_flag])
             };
 
-            let validate_input = validate; // input commitment is ALWAYS the same for all the circuits of some type
-
+            let validate_observable_input = validate; // input commitment is ALWAYS the same for all the circuits of some type
             conditionally_enforce_circuit_commitment(
                 cs,
-                validate_input,
+                validate_observable_input,
                 &closed_form_input.observable_input_committment,
                 &sample_circuit_commitment,
             );
 
-            let validate_output = if let Some(skip_flag) = skip_flag {
+            let validate_observable_output = if let Some(skip_flag) = skip_flag {
                 let not_skip = skip_flag.negated(cs); // this is memoized
                 Boolean::multi_and(
                     cs,
@@ -733,7 +734,7 @@ pub fn scheduler_function<
 
             conditionally_enforce_circuit_commitment(
                 cs,
-                validate_output,
+                validate_observable_output,
                 &closed_form_input.observable_output_committment,
                 &sample_circuit_commitment,
             );
@@ -767,6 +768,25 @@ pub fn scheduler_function<
         }
 
         let push_to_any = Boolean::multi_or(cs, &computed_applicability_flags);
+
+        // for any circuit that is NOT start, but is added to recursion queue we validate that previous hidden FSM output
+        // is given to this circuit as hidden FSM input
+
+        // NOTE: we use `start_flag` from witness because we validated it's logic in the lines around
+        // `start_of_next_when_previous_is_finished` above, so it correctly represents continuation
+
+        let continue_same_type = closed_form_input.start_flag.negated(cs);
+        let validate_hidden_input = Boolean::multi_and(cs, &[push_to_any, continue_same_type]);
+        conditionally_enforce_circuit_commitment(
+            cs,
+            validate_hidden_input,
+            &closed_form_input.hidden_fsm_input_committment,
+            &hidden_fsm_input_to_use,
+        );
+
+        // and here we can just update it for the next step
+        hidden_fsm_input_to_use = closed_form_input.hidden_fsm_output_committment;
+
         let closed_form_input_comm =
             commit_variable_length_encodable_item(cs, &closed_form_input, round_function);
         let query = RecursionQuery {
