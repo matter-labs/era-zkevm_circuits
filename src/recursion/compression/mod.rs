@@ -72,10 +72,6 @@ pub fn proof_compression_function<
         ..
     } = config;
 
-    // use this and deal with borrow checker
-
-    let r = cs as *mut CS;
-
     assert_eq!(
         verification_key.fixed_parameters.parameters,
         verifier_builder.geometry()
@@ -84,8 +80,6 @@ pub fn proof_compression_function<
     let fixed_parameters = verification_key.fixed_parameters.clone();
 
     let verifier = verifier_builder.create_recursive_verifier(cs);
-
-    let cs = unsafe { &mut *r };
 
     let vk = AllocatedVerificationKey::allocate_constant(cs, verification_key);
 

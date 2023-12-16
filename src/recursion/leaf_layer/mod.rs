@@ -135,17 +135,9 @@ where
         ..
     } = config;
 
-    // use this and deal with borrow checker
-
-    let r = cs as *mut CS;
-
     assert_eq!(vk_fixed_parameters.parameters, verifier_builder.geometry());
 
     let verifier = verifier_builder.create_recursive_verifier(cs);
-
-    drop(cs);
-
-    let cs = unsafe { &mut *r };
 
     for _ in 0..capacity {
         let proof_witness = proof_witnesses.pop_front();

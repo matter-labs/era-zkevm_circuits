@@ -163,17 +163,9 @@ where
 
     let mut proof_witnesses = proof_witnesses;
 
-    // use this and deal with borrow checker
-
-    let r = cs as *mut CS;
-
     assert_eq!(vk_fixed_parameters.parameters, verifier_builder.geometry());
 
     let verifier = verifier_builder.create_recursive_verifier(cs);
-
-    drop(cs);
-
-    let cs = unsafe { &mut *r };
 
     let subqueues = split_queue_state_into_n(cs, queue_state, node_layer_capacity, split_points);
 
