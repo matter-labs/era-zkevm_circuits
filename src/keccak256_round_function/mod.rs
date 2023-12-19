@@ -563,11 +563,19 @@ pub(crate) fn keccak256_absorb_and_run_permutation<F: SmallField, CS: Constraint
     // copy back
     let mut result =
         [std::mem::MaybeUninit::<UInt8<F>>::uninit(); keccak256::KECCAK256_DIGEST_SIZE];
-    for (i, dst) in result.array_chunks_mut::<8>().enumerate() {
-        for (dst, src) in dst.iter_mut().zip(state[i][0].iter()) {
+    for (i, dst) in result
+        .array_chunks_mut::<{ keccak256::BYTES_PER_WORD }>()
+        .enumerate()
+    {
+        // Type annotation to ensure that the length is equivalent to 8 elements of each array chunk
+        // such that the transmute below is safe.
+        let s: &[_; keccak256::BYTES_PER_WORD] = &state[i][0];
+        for (dst, src) in dst.iter_mut().zip(s.iter()) {
             dst.write(*src);
         }
     }
 
-    unsafe { result.map(|el| el.assume_init()) }
+    // SAFETY: This is safe to transmute because result is fully initialized from writing
+    //         4 chunks of 8 elements.
+    unsafe { std::mem::transmute(result) }
 }
