@@ -70,4 +70,4 @@ fn secp256k1_scalar_field_params() -> Secp256ScalarNNFieldParams {
 }
 
 // re-exports for integration
-pub use self::baseline::{ecrecover_function_entry_point, EcrecoverPrecompileCallParams};
+pub use self::new_optimized::{ecrecover_function_entry_point, EcrecoverPrecompileCallParams};

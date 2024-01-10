@@ -294,6 +294,18 @@ where
         ergs_left_after_growth.add_no_overflow(cs, new_callstack_entry.ergs_remaining);
 
     new_callstack_entry.ergs_remaining = new_ergs_left;
+    new_callstack_entry.heap_upper_bound = Selectable::conditionally_select(
+        cs,
+        is_local_frame,
+        &heap_bound,
+        &new_callstack_entry.heap_upper_bound,
+    );
+    new_callstack_entry.aux_heap_upper_bound = Selectable::conditionally_select(
+        cs,
+        is_local_frame,
+        &aux_heap_bound,
+        &new_callstack_entry.aux_heap_upper_bound,
+    );
 
     // resolve merging of the queues
 

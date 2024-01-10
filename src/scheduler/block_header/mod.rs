@@ -20,6 +20,7 @@ use boojum::serde_utils::BigArraySerde;
 use boojum::gadgets::keccak256;
 
 pub const NUM_SHARDS: usize = 2;
+pub const MAX_4844_BLOBS_PER_BLOCK: usize = 2;
 
 // Data that represents a pure state
 #[derive(Derivative, CSAllocatable, CSSelectable, CSVarLengthEncodable, WitnessHookable)]
@@ -54,6 +55,8 @@ pub struct BlockAuxilaryOutput<F: SmallField> {
     pub rollup_state_diff_for_compression: [UInt8<F>; 32],
     pub bootloader_heap_initial_content: [UInt8<F>; 32],
     pub events_queue_state: [UInt8<F>; 32],
+    pub eip4844_linear_hashes: [[UInt8<F>; 32]; MAX_4844_BLOBS_PER_BLOCK],
+    pub eip4844_output_commitment_hashes: [[UInt8<F>; 32]; MAX_4844_BLOBS_PER_BLOCK],
 }
 
 #[derive(Derivative, CSAllocatable, CSSelectable, CSVarLengthEncodable, WitnessHookable)]
@@ -123,6 +126,14 @@ impl<F: SmallField> BlockAuxilaryOutput<F> {
         result.extend_from_slice(&self.rollup_state_diff_for_compression);
         result.extend_from_slice(&self.bootloader_heap_initial_content);
         result.extend_from_slice(&self.events_queue_state);
+        for (linear_hash, blob_opening_commitment) in self
+            .eip4844_linear_hashes
+            .iter()
+            .zip(self.eip4844_output_commitment_hashes.iter())
+        {
+            result.extend_from_slice(linear_hash);
+            result.extend_from_slice(blob_opening_commitment);
+        }
 
         result
     }

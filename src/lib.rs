@@ -17,6 +17,7 @@ pub mod base_structures;
 pub mod code_unpacker_sha256;
 pub mod demux_log_queue;
 pub mod ecrecover;
+pub mod eip_4844;
 pub mod fsm_input_output;
 pub mod keccak256_round_function;
 pub mod linear_hasher;

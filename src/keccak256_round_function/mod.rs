@@ -13,6 +13,7 @@ use cs_derive::*;
 
 use crate::ethereum_types::U256;
 use crate::fsm_input_output::circuit_inputs::INPUT_OUTPUT_COMMITMENT_LENGTH;
+use crate::keccak256_round_function::buffer::ByteBuffer;
 use boojum::gadgets::num::Num;
 use zkevm_opcode_defs::system_params::PRECOMPILE_AUX_BYTE;
 
@@ -35,6 +36,8 @@ use boojum::gadgets::u160::UInt160;
 use boojum::gadgets::u8::UInt8;
 use std::sync::{Arc, RwLock};
 
+pub mod buffer;
+
 pub mod input;
 use self::input::*;
 
@@ -43,55 +46,106 @@ use self::input::*;
 // #[DerivePrettyComparison("true")]
 pub struct Keccak256PrecompileCallParams<F: SmallField> {
     pub input_page: UInt32<F>,
-    pub input_offset: UInt32<F>,
+    pub input_memory_byte_offset: UInt32<F>,
+    pub input_memory_byte_length: UInt32<F>,
     pub output_page: UInt32<F>,
-    pub output_offset: UInt32<F>,
-    pub num_rounds: UInt32<F>,
+    pub output_word_offset: UInt32<F>,
+    pub needs_full_padding_round: Boolean<F>,
 }
 
 impl<F: SmallField> CSPlaceholder<F> for Keccak256PrecompileCallParams<F> {
     fn placeholder<CS: ConstraintSystem<F>>(cs: &mut CS) -> Self {
         let zero_u32 = UInt32::zero(cs);
+        let boolean_false = Boolean::allocated_constant(cs, false);
         Self {
             input_page: zero_u32,
-            input_offset: zero_u32,
+            input_memory_byte_offset: zero_u32,
+            input_memory_byte_length: zero_u32,
             output_page: zero_u32,
-            output_offset: zero_u32,
-            num_rounds: zero_u32,
+            output_word_offset: zero_u32,
+            needs_full_padding_round: boolean_false,
         }
     }
 }
 
 impl<F: SmallField> Keccak256PrecompileCallParams<F> {
-    pub fn from_encoding<CS: ConstraintSystem<F>>(_cs: &mut CS, encoding: UInt256<F>) -> Self {
-        let input_offset = encoding.inner[0];
-        let output_offset = encoding.inner[2];
+    // from PrecompileCallABI
+    pub fn from_encoding<CS: ConstraintSystem<F>>(cs: &mut CS, encoding: UInt256<F>) -> Self {
+        let input_memory_byte_offset = encoding.inner[0];
+        let input_memory_byte_length = encoding.inner[1];
+
+        let output_word_offset = encoding.inner[2];
+
         let input_page = encoding.inner[4];
         let output_page = encoding.inner[5];
 
-        let num_rounds = encoding.inner[6];
+        let (_, rem) = input_memory_byte_length.div_by_constant(cs, KECCAK_RATE_BYTES as u32);
+
+        let needs_full_padding_round = rem.is_zero(cs);
 
         let new = Self {
             input_page,
-            input_offset,
+            input_memory_byte_offset,
+            input_memory_byte_length,
             output_page,
-            output_offset,
-            num_rounds,
+            output_word_offset,
+            needs_full_padding_round,
         };
 
         new
     }
 }
 
+fn trivial_mapping_function<
+    F: SmallField,
+    CS: ConstraintSystem<F>,
+    const N: usize,
+    const BUFFER_SIZE: usize,
+>(
+    cs: &mut CS,
+    bytes_to_consume: &UInt8<F>,
+    current_fill_factor: &UInt8<F>,
+    _unused: [(); N],
+) -> [Boolean<F>; BUFFER_SIZE] {
+    use boojum::config::*;
+    if <CS::Config as CSConfig>::DebugConfig::PERFORM_RUNTIME_ASSERTS == true {
+        let already_filled = current_fill_factor.witness_hook(cs)();
+        let new_to_fill = bytes_to_consume.witness_hook(cs)();
+        if let Some(already_filled) = already_filled {
+            if let Some(new_to_fill) = new_to_fill {
+                assert!(new_to_fill as usize + already_filled as usize <= BUFFER_SIZE);
+            }
+        }
+    }
+
+    let boolean_false = Boolean::allocated_constant(cs, false);
+
+    let mut result = [boolean_false; BUFFER_SIZE];
+    let zero_to_fill = bytes_to_consume.is_zero(cs);
+    let marker = zero_to_fill.negated(cs);
+
+    // we just need to put a marker after the current fill value
+    let mut tmp = current_fill_factor.into_num();
+    let one_num = Num::allocated_constant(cs, F::ONE);
+    for dst in result.iter_mut() {
+        let should_fill = tmp.is_zero(cs);
+        *dst = should_fill.and(cs, marker);
+        tmp = tmp.sub(cs, &one_num);
+    }
+
+    result
+}
+
+use boojum::gadgets::keccak256::KECCAK_RATE_BYTES;
+
 pub const KECCAK256_RATE_IN_U64_WORDS: usize = 17;
-pub const MEMORY_EQURIES_PER_CYCLE: usize = 5; // we need to read as much as possible to use a round function every cycle
+pub const MEMORY_EQURIES_PER_CYCLE: usize = 6; // we need to read as much as possible to use a round function every cycle
 pub const NUM_U64_WORDS_PER_CYCLE: usize = 4 * MEMORY_EQURIES_PER_CYCLE;
 pub const NEW_BYTES_PER_CYCLE: usize = 8 * NUM_U64_WORDS_PER_CYCLE;
 // we absorb 136 elements per cycle, and add 160 elements per cycle, so we need to skip memory reads
 // sometimes and do absorbs instead
-pub const BUFFER_SIZE_IN_U64_WORDS: usize =
-    MEMORY_EQURIES_PER_CYCLE * 4 + KECCAK256_RATE_IN_U64_WORDS - 1;
-pub const BYTES_BUFFER_SIZE: usize = BUFFER_SIZE_IN_U64_WORDS * 8;
+pub const BUFFER_SIZE_IN_U64_WORDS: usize = 192 / 8;
+pub const BYTES_BUFFER_SIZE: usize = 192;
 
 pub fn keccak256_precompile_inner<
     F: SmallField,
@@ -123,10 +177,13 @@ where
     let boolean_false = Boolean::allocated_constant(cs, false);
     let boolean_true = Boolean::allocated_constant(cs, true);
     let zero_u8 = UInt8::zero(cs);
-    let buffer_len_bound = UInt16::allocated_constant(
-        cs,
-        (BUFFER_SIZE_IN_U64_WORDS - NUM_U64_WORDS_PER_CYCLE + 1) as u16,
-    );
+    let one_num = Num::allocated_constant(cs, F::ONE);
+
+    let empty_buffer = ByteBuffer::<F, KECCAK_PRECOMPILE_BUFFER_SIZE>::placeholder(cs);
+
+    let mut full_padding_buffer = [zero_u8; KECCAK_RATE_BYTES];
+    full_padding_buffer[0] = UInt8::allocated_constant(cs, 0x01);
+    full_padding_buffer[KECCAK_RATE_BYTES - 1] = UInt8::allocated_constant(cs, 0x80);
 
     // we can have a degenerate case when queue is empty, but it's a first circuit in the queue,
     // so we taken default FSM state that has state.read_precompile_call = true;
@@ -150,6 +207,11 @@ where
 
     // main work cycle
     for _cycle in 0..limit {
+        dbg!(state.read_precompile_call.witness_hook(cs)());
+        dbg!(state.read_unaligned_words_for_round.witness_hook(cs)());
+        dbg!(state.padding_round.witness_hook(cs)());
+        dbg!(state.completed.witness_hook(cs)());
+
         // if we are in a proper state then get the ABI from the queue
         let (precompile_call, _) = precompile_calls_queue.pop_front(cs, state.read_precompile_call);
 
@@ -177,6 +239,7 @@ where
 
         let params_encoding = precompile_call.key;
         let call_params = Keccak256PrecompileCallParams::from_encoding(cs, params_encoding);
+        dbg!(call_params.witness_hook(cs)());
 
         state.precompile_call_params = Keccak256PrecompileCallParams::conditionally_select(
             cs,
@@ -216,142 +279,12 @@ where
         // ---------------------------------
         // Now perform few memory queries to read content
 
-        for el in state.u64_words_buffer_markers.iter_mut() {
-            *el = Boolean::conditionally_select(cs, reset_buffer, &boolean_false, el);
-        }
-
-        // even though it's not important, we cleanup the buffer too
-        for el in state.u8_words_buffer.iter_mut() {
-            *el = UInt8::conditionally_select(cs, reset_buffer, &zero_u8, el);
-        }
-
-        let initial_buffer_len = {
-            let lc: Vec<_> = state
-                .u64_words_buffer_markers
-                .iter()
-                .map(|el| (el.get_variable(), F::ONE))
-                .collect();
-            let lc = Num::linear_combination(cs, &lc);
-
-            unsafe { UInt16::from_variable_unchecked(lc.get_variable()) }
-        };
-
-        // we can fill the buffer as soon as it's length <= MAX - NEW_WORDS_PER_CYCLE
-        let (_, of) = initial_buffer_len.overflowing_sub(cs, &buffer_len_bound);
-        let can_fill = of;
-        let can_not_fill = can_fill.negated(cs);
-        let zero_rounds_left = state.precompile_call_params.num_rounds.is_zero(cs);
-        // if we can not fill then we should (sanity check) be in a state of reading new words
-        // and have >0 rounds left
-
-        state
-            .read_unaligned_words_for_round
-            .conditionally_enforce_true(cs, can_not_fill);
-        zero_rounds_left.conditionally_enforce_false(cs, can_not_fill);
-        let non_zero_rounds_left = zero_rounds_left.negated(cs);
-
-        let should_read = Boolean::multi_and(
+        state.buffer = ByteBuffer::<F, KECCAK_PRECOMPILE_BUFFER_SIZE>::conditionally_select(
             cs,
-            &[
-                non_zero_rounds_left,
-                state.read_unaligned_words_for_round,
-                can_fill,
-            ],
+            reset_buffer,
+            &empty_buffer,
+            &state.buffer,
         );
-
-        let mut new_bytes_to_read = [zero_u8; NEW_BYTES_PER_CYCLE];
-        let mut bias_variable = should_read.get_variable();
-        for dst in new_bytes_to_read.array_chunks_mut::<32>() {
-            let read_query_value =
-                memory_read_witness.conditionally_allocate_biased(cs, should_read, bias_variable);
-            bias_variable = read_query_value.inner[0].get_variable();
-
-            let read_query = MemoryQuery {
-                timestamp: state.timestamp_to_use_for_read,
-                memory_page: state.precompile_call_params.input_page,
-                index: state.precompile_call_params.input_offset,
-                rw_flag: boolean_false,
-                is_ptr: boolean_false,
-                value: read_query_value,
-            };
-
-            let may_be_new_offset = unsafe {
-                state
-                    .precompile_call_params
-                    .input_offset
-                    .increment_unchecked(cs)
-            };
-            state.precompile_call_params.input_offset = UInt32::conditionally_select(
-                cs,
-                should_read,
-                &may_be_new_offset,
-                &state.precompile_call_params.input_offset,
-            );
-
-            // perform read
-            memory_queue.push(cs, read_query, should_read);
-
-            // we need to change endianess. Memory is BE, and each of 4 byte chunks should be interpreted as BE u32 for sha256
-            let be_bytes = read_query_value.to_be_bytes(cs);
-            *dst = be_bytes;
-        }
-
-        // our buffer len fits at least to push new elements and get enough for round function
-        // this is quadratic complexity, but we it's easier to handle and cheap compared to round function
-        let should_push = should_read;
-
-        for src in new_bytes_to_read.array_chunks::<8>() {
-            let mut should_push = should_push;
-            for (is_busy, dst) in state
-                .u64_words_buffer_markers
-                .iter_mut()
-                .zip(state.u8_words_buffer.array_chunks_mut::<8>())
-            {
-                let is_free = is_busy.negated(cs);
-                let update = Boolean::multi_and(cs, &[is_free, should_push]);
-                let should_not_update = update.negated(cs);
-                *dst = UInt8::parallel_select(cs, update, src, dst);
-                *is_busy = Boolean::multi_or(cs, &[update, *is_busy]);
-                should_push = Boolean::multi_and(cs, &[should_push, should_not_update]);
-            }
-
-            Boolean::enforce_equal(cs, &should_push, &boolean_false);
-        }
-
-        let may_be_new_num_rounds = unsafe {
-            state
-                .precompile_call_params
-                .num_rounds
-                .decrement_unchecked(cs)
-        };
-        state.precompile_call_params.num_rounds = UInt32::conditionally_select(
-            cs,
-            state.read_unaligned_words_for_round,
-            &may_be_new_num_rounds,
-            &state.precompile_call_params.num_rounds,
-        );
-
-        // absorb
-
-        // compute shifted buffer that removes first RATE elements and padds with something
-
-        // take some work
-        let mut input = [zero_u8; keccak256::KECCAK_RATE_BYTES];
-        input.copy_from_slice(&state.u8_words_buffer[..keccak256::KECCAK_RATE_BYTES]);
-
-        // keep the rest
-        let mut tmp_buffer = [zero_u8; BYTES_BUFFER_SIZE];
-        tmp_buffer[..(BYTES_BUFFER_SIZE - keccak256::KECCAK_RATE_BYTES)]
-            .copy_from_slice(&state.u8_words_buffer[keccak256::KECCAK_RATE_BYTES..]);
-
-        // also reset markers
-        let mut tmp_buffer_markers = [boolean_false; BUFFER_SIZE_IN_U64_WORDS];
-        tmp_buffer_markers[..(BUFFER_SIZE_IN_U64_WORDS - KECCAK256_RATE_IN_U64_WORDS)]
-            .copy_from_slice(&state.u64_words_buffer_markers[KECCAK256_RATE_IN_U64_WORDS..]);
-
-        // update buffers
-        state.u8_words_buffer = tmp_buffer;
-        state.u64_words_buffer_markers = tmp_buffer_markers;
 
         // conditionally reset state. Keccak256 empty state is just all 0s
 
@@ -363,20 +296,197 @@ where
             }
         }
 
+        let no_more_bytes = state
+            .precompile_call_params
+            .input_memory_byte_length
+            .is_zero(cs);
+        let have_leftover_bytes = no_more_bytes.negated(cs);
+        let should_read_in_general = Boolean::multi_and(
+            cs,
+            &[have_leftover_bytes, state.read_unaligned_words_for_round],
+        );
+
+        let mapping_function = |cs: &mut CS,
+                                bytes_to_consume: UInt8<F>,
+                                current_fill_factor: UInt8<F>,
+                                _unused: [(); 32]| {
+            trivial_mapping_function::<F, CS, 32, KECCAK_PRECOMPILE_BUFFER_SIZE>(
+                cs,
+                &bytes_to_consume,
+                &current_fill_factor,
+                _unused,
+            )
+        };
+
+        let mut bias_variable = should_read_in_general.get_variable();
+        for _ in 0..MEMORY_QUERIES_PER_CYCLE {
+            // we have a little more complex logic here, but it's homogenious
+            // dbg!(state.witness_hook(cs)());
+
+            let (aligned_memory_index, unalignment) = state
+                .precompile_call_params
+                .input_memory_byte_offset
+                .div_by_constant(cs, 32);
+            let at_most_meaningful_bytes_in_query = UInt32::allocated_constant(cs, 32)
+                .into_num()
+                .sub(cs, &unalignment.into_num());
+            let at_most_meaningful_bytes_in_query = unsafe {
+                UInt32::from_variable_unchecked(at_most_meaningful_bytes_in_query.get_variable())
+            };
+            let (_, uf) = state
+                .precompile_call_params
+                .input_memory_byte_length
+                .overflowing_sub(cs, at_most_meaningful_bytes_in_query);
+            let meaningful_bytes_in_query = UInt32::conditionally_select(
+                cs,
+                uf,
+                &state.precompile_call_params.input_memory_byte_length,
+                &at_most_meaningful_bytes_in_query,
+            );
+
+            // dbg!(aligned_memory_index.witness_hook(cs)());
+            // dbg!(unalignment.witness_hook(cs)());
+            // dbg!(at_most_meaningful_bytes_in_query.witness_hook(cs)());
+            // dbg!(meaningful_bytes_in_query.witness_hook(cs)());
+
+            let nothing_to_read = meaningful_bytes_in_query.is_zero(cs);
+            let have_something_to_read = nothing_to_read.negated(cs);
+            let bytes_to_fill =
+                unsafe { UInt8::from_variable_unchecked(meaningful_bytes_in_query.get_variable()) };
+            let enough_buffer_space = state.buffer.can_fill_bytes(cs, bytes_to_fill);
+            let should_read = Boolean::multi_and(
+                cs,
+                &[
+                    have_something_to_read,
+                    enough_buffer_space,
+                    state.read_unaligned_words_for_round,
+                ],
+            );
+
+            let read_query_value =
+                memory_read_witness.conditionally_allocate_biased(cs, should_read, bias_variable);
+            bias_variable = read_query_value.inner[0].get_variable();
+
+            let read_query = MemoryQuery {
+                timestamp: state.timestamp_to_use_for_read,
+                memory_page: state.precompile_call_params.input_page,
+                index: aligned_memory_index,
+                rw_flag: boolean_false,
+                is_ptr: boolean_false,
+                value: read_query_value,
+            };
+
+            // perform read
+            memory_queue.push(cs, read_query, should_read);
+
+            // update state variables
+            let may_be_new_input_memory_byte_offset = state
+                .precompile_call_params
+                .input_memory_byte_offset
+                .add_no_overflow(cs, meaningful_bytes_in_query);
+            let may_be_new_input_memory_byte_length = state
+                .precompile_call_params
+                .input_memory_byte_length
+                .sub_no_overflow(cs, meaningful_bytes_in_query);
+
+            state.precompile_call_params.input_memory_byte_offset = UInt32::conditionally_select(
+                cs,
+                should_read,
+                &may_be_new_input_memory_byte_offset,
+                &state.precompile_call_params.input_memory_byte_offset,
+            );
+            state.precompile_call_params.input_memory_byte_length = UInt32::conditionally_select(
+                cs,
+                should_read,
+                &may_be_new_input_memory_byte_length,
+                &state.precompile_call_params.input_memory_byte_length,
+            );
+
+            // update if we do not read
+            let bytes_to_fill = bytes_to_fill.mask(cs, should_read);
+
+            // fill the buffer
+            let be_bytes = read_query_value.to_be_bytes(cs);
+            let offset = unsafe { UInt8::from_variable_unchecked(unalignment.get_variable()) };
+
+            state
+                .buffer
+                .fill_with_bytes(cs, &be_bytes, offset, bytes_to_fill, mapping_function);
+        }
+
+        // now actually run keccak permutation
+
+        // we either mask for padding, or mask in full if it's full padding round
+        let zero_bytes_left = state
+            .precompile_call_params
+            .input_memory_byte_length
+            .is_zero(cs);
+        let no_extra_padding_round_required = state
+            .precompile_call_params
+            .needs_full_padding_round
+            .negated(cs);
+        let apply_padding = Boolean::multi_and(
+            cs,
+            &[
+                zero_bytes_left,
+                state.read_unaligned_words_for_round,
+                no_extra_padding_round_required,
+            ],
+        );
+
+        let currently_filled = state.buffer.filled;
+        let almost_filled = UInt8::allocated_constant(cs, (KECCAK_RATE_BYTES - 1) as u8);
+        let do_one_byte_of_padding = UInt8::equals(cs, &currently_filled, &almost_filled);
+        let mut input = state
+            .buffer
+            .consume::<CS, KECCAK_RATE_BYTES>(cs, boolean_true);
+        dbg!(input.witness_hook(cs)().map(|el| hex::encode(&el)));
+
+        let mut tmp = currently_filled.into_num();
+        let pad_constant = UInt8::allocated_constant(cs, 0x01);
+        for dst in input[..(KECCAK_RATE_BYTES - 1)].iter_mut() {
+            let pad_this_byte = tmp.is_zero(cs);
+            let apply_padding = Boolean::multi_and(cs, &[apply_padding, pad_this_byte]);
+            *dst = UInt8::conditionally_select(cs, apply_padding, &pad_constant, &*dst);
+            tmp = tmp.sub(cs, &one_num);
+        }
+
+        let normal_last_byte_padding_value = UInt8::allocated_constant(cs, 0x80);
+        let special_last_byte_paddings_value = UInt8::allocated_constant(cs, 0x81);
+        let last_byte_padding_value = UInt8::conditionally_select(
+            cs,
+            do_one_byte_of_padding,
+            &special_last_byte_paddings_value,
+            &normal_last_byte_padding_value,
+        );
+        input[KECCAK_RATE_BYTES - 1] = UInt8::conditionally_select(
+            cs,
+            apply_padding,
+            &last_byte_padding_value,
+            &input[KECCAK_RATE_BYTES - 1],
+        );
+
+        let input =
+            UInt8::<F>::parallel_select(cs, state.padding_round, &full_padding_buffer, &input);
+        dbg!(input.witness_hook(cs)().map(|el| hex::encode(&el)));
+
         // manually absorb and run round function
         let squeezed =
             keccak256_absorb_and_run_permutation(cs, &mut state.keccak_internal_state, &input);
 
-        let no_rounds_left = state.precompile_call_params.num_rounds.is_zero(cs);
-        let write_result =
-            Boolean::multi_and(cs, &[state.read_unaligned_words_for_round, no_rounds_left]);
+        let absorbed_and_padded = apply_padding;
+        // dbg!(absorbed_and_padded.witness_hook(cs)());
+        // dbg!(state.padding_round.witness_hook(cs)());
+        let finished_processing =
+            Boolean::multi_or(cs, &[absorbed_and_padded, state.padding_round]);
+        let write_result = finished_processing;
 
         let result = UInt256::from_be_bytes(cs, squeezed);
 
         let write_query = MemoryQuery {
             timestamp: state.timestamp_to_use_for_write,
             memory_page: state.precompile_call_params.output_page,
-            index: state.precompile_call_params.output_offset,
+            index: state.precompile_call_params.output_word_offset,
             rw_flag: boolean_true,
             is_ptr: boolean_false,
             value: result,
@@ -387,7 +497,7 @@ where
 
         // ---------------------------------
 
-        // update call props
+        // update FSM state
         let input_is_empty = precompile_calls_queue.is_empty(cs);
         let input_is_not_empty = input_is_empty.negated(cs);
         let nothing_left = Boolean::multi_and(cs, &[write_result, input_is_empty]);
@@ -395,7 +505,27 @@ where
 
         state.read_precompile_call = process_next;
         state.completed = Boolean::multi_or(cs, &[nothing_left, state.completed]);
-        let t = Boolean::multi_or(cs, &[state.read_precompile_call, state.completed]);
+
+        // now we need to decide on full padding round
+        let needs_full_padding = Boolean::multi_and(
+            cs,
+            &[
+                state.read_unaligned_words_for_round,
+                zero_bytes_left,
+                state.precompile_call_params.needs_full_padding_round,
+            ],
+        );
+        state.padding_round = needs_full_padding;
+
+        // otherwise we just continue
+        let t = Boolean::multi_or(
+            cs,
+            &[
+                state.read_precompile_call,
+                state.padding_round,
+                state.completed,
+            ],
+        );
         state.read_unaligned_words_for_round = t.negated(cs);
     }
 
@@ -570,4 +700,299 @@ pub(crate) fn keccak256_absorb_and_run_permutation<F: SmallField, CS: Constraint
     }
 
     unsafe { result.map(|el| el.assume_init()) }
+}
+
+#[cfg(test)]
+mod test {
+    use boojum::algebraic_props::poseidon2_parameters::*;
+    use boojum::config::DevCSConfig;
+    use boojum::cs::cs_builder::*;
+    use boojum::cs::gates::*;
+    use boojum::cs::implementations::reference_cs::CSReferenceImplementation;
+    use boojum::cs::traits::gate::*;
+    use boojum::cs::*;
+    use boojum::field::goldilocks::GoldilocksField;
+    use boojum::gadgets::tables::*;
+    use boojum::implementations::poseidon2::Poseidon2Goldilocks;
+    use boojum::worker::Worker;
+    use zkevm_opcode_defs::PrecompileCallABI;
+
+    use super::*;
+
+    type F = GoldilocksField;
+    type P = GoldilocksField;
+    type R = Poseidon2Goldilocks;
+
+    fn create_test_cs() -> CSReferenceImplementation<
+        GoldilocksField,
+        GoldilocksField,
+        DevCSConfig,
+        impl GateConfigurationHolder<GoldilocksField>,
+        impl StaticToolboxHolder,
+    > {
+        let geometry = CSGeometry {
+            num_columns_under_copy_permutation: 100,
+            num_witness_columns: 0,
+            num_constant_columns: 8,
+            max_allowed_constraint_degree: 4,
+        };
+
+        fn configure<
+            T: CsBuilderImpl<F, T>,
+            GC: GateConfigurationHolder<F>,
+            TB: StaticToolboxHolder,
+        >(
+            builder: CsBuilder<T, F, GC, TB>,
+        ) -> CsBuilder<T, F, impl GateConfigurationHolder<F>, impl StaticToolboxHolder> {
+            let builder = builder.allow_lookup(
+                LookupParameters::UseSpecializedColumnsWithTableIdAsConstant {
+                    width: 3,
+                    num_repetitions: 8,
+                    share_table_id: true,
+                },
+            );
+            let builder = ConstantsAllocatorGate::configure_builder(
+                builder,
+                GatePlacementStrategy::UseGeneralPurposeColumns,
+            );
+            let builder = FmaGateInBaseFieldWithoutConstant::configure_builder(
+                builder,
+                GatePlacementStrategy::UseGeneralPurposeColumns,
+            );
+            let builder = ReductionGate::<F, 4>::configure_builder(
+                builder,
+                GatePlacementStrategy::UseGeneralPurposeColumns,
+            );
+            let builder = BooleanConstraintGate::configure_builder(
+                builder,
+                GatePlacementStrategy::UseGeneralPurposeColumns,
+            );
+            let builder = UIntXAddGate::<32>::configure_builder(
+                builder,
+                GatePlacementStrategy::UseGeneralPurposeColumns,
+            );
+            let builder = UIntXAddGate::<16>::configure_builder(
+                builder,
+                GatePlacementStrategy::UseGeneralPurposeColumns,
+            );
+            let builder = UIntXAddGate::<8>::configure_builder(
+                builder,
+                GatePlacementStrategy::UseGeneralPurposeColumns,
+            );
+            let builder = SelectionGate::configure_builder(
+                builder,
+                GatePlacementStrategy::UseGeneralPurposeColumns,
+            );
+            let builder = ZeroCheckGate::configure_builder(
+                builder,
+                GatePlacementStrategy::UseGeneralPurposeColumns,
+                false,
+            );
+            let builder = DotProductGate::<4>::configure_builder(
+                builder,
+                GatePlacementStrategy::UseGeneralPurposeColumns,
+            );
+            let builder = MatrixMultiplicationGate::<F, 12, Poseidon2GoldilocksExternalMatrix>::configure_builder(builder,GatePlacementStrategy::UseGeneralPurposeColumns);
+            let builder = MatrixMultiplicationGate::<F, 12, Poseidon2GoldilocksInnerMatrix>::configure_builder(builder,GatePlacementStrategy::UseGeneralPurposeColumns);
+            let builder = NopGate::configure_builder(
+                builder,
+                GatePlacementStrategy::UseGeneralPurposeColumns,
+            );
+
+            builder
+        }
+
+        use boojum::cs::cs_builder_reference::CsReferenceImplementationBuilder;
+
+        let builder_impl =
+            CsReferenceImplementationBuilder::<F, P, DevCSConfig>::new(geometry, 1 << 26, 1 << 20);
+        use boojum::cs::cs_builder::new_builder;
+        let builder = new_builder::<_, F>(builder_impl);
+
+        let builder = configure(builder);
+        let mut owned_cs = builder.build(());
+
+        // add tables for keccak
+        let table = create_xor8_table();
+        owned_cs.add_lookup_table::<Xor8Table, 3>(table);
+
+        let table = create_and8_table();
+        owned_cs.add_lookup_table::<And8Table, 3>(table);
+
+        let table = create_byte_split_table::<F, 1>();
+        owned_cs.add_lookup_table::<ByteSplitTable<1>, 3>(table);
+        let table = create_byte_split_table::<F, 2>();
+        owned_cs.add_lookup_table::<ByteSplitTable<2>, 3>(table);
+        let table = create_byte_split_table::<F, 3>();
+        owned_cs.add_lookup_table::<ByteSplitTable<3>, 3>(table);
+        let table = create_byte_split_table::<F, 4>();
+        owned_cs.add_lookup_table::<ByteSplitTable<4>, 3>(table);
+
+        owned_cs
+    }
+
+    fn bytes_to_u256_words(input: Vec<u8>, unalignement: usize) -> Vec<U256> {
+        let mut result = vec![];
+        let mut it = std::iter::repeat(0xffu8)
+            .take(unalignement)
+            .chain(input.into_iter());
+        'outer: loop {
+            let mut done = false;
+            let mut buffer = [0u8; 32];
+            for (idx, dst) in buffer.iter_mut().enumerate() {
+                if let Some(src) = it.next() {
+                    *dst = src;
+                } else {
+                    done = true;
+                    if idx == 0 {
+                        break 'outer;
+                    }
+                    break;
+                }
+            }
+            let el = U256::from_big_endian(&buffer);
+            result.push(el);
+            if done {
+                break 'outer;
+            }
+        }
+
+        result
+    }
+
+    fn test_for_length_and_unalignment(length: usize, unalignement: usize) {
+        use rand_new::{Rng, SeedableRng};
+        let mut rng = rand_new::rngs::StdRng::from_seed([1u8; 32]);
+        let input: Vec<u8> = (0..length).map(|_| rng.gen()).collect();
+        dbg!(hex::encode(&input));
+        let input_witness = bytes_to_u256_words(input.clone(), unalignement);
+
+        use boojum::sha3::Digest;
+        let reference: [u8; 32] = boojum::sha3::Keccak256::digest(&input)
+            .as_slice()
+            .try_into()
+            .unwrap();
+
+        let mut owned_cs = create_test_cs();
+        let cs = &mut owned_cs;
+        let mut memory_queue = MemoryQueue::<F, R>::empty(cs);
+
+        let precompile_abi = PrecompileCallABI {
+            input_memory_offset: unalignement as u32,
+            input_memory_length: length as u32,
+            output_memory_offset: 0,
+            output_memory_length: 1,
+            memory_page_to_read: 123,
+            memory_page_to_write: 456,
+            precompile_interpreted_data: 0,
+        };
+        let encoded_precompile_abi = precompile_abi.to_u256();
+        let boolean_true = Boolean::allocated_constant(cs, true);
+
+        let mut precompile_calls_queue = StorageLogQueue::<F, R>::empty(cs);
+        let el = LogQueryWitness {
+            address: *zkevm_opcode_defs::system_params::KECCAK256_ROUND_FUNCTION_PRECOMPILE_FORMAL_ADDRESS,
+            key: encoded_precompile_abi,
+            read_value: U256::zero(),
+            written_value: U256::zero(),
+            aux_byte: PRECOMPILE_AUX_BYTE,
+            rw_flag: true,
+            rollback: false,
+            is_service: false,
+            shard_id: 0,
+            tx_number_in_block: 0,
+            timestamp: 0,
+        };
+        let el = LogQuery::allocate(cs, el);
+        precompile_calls_queue.push(cs, el, boolean_true);
+
+        let mut state = Keccak256RoundFunctionFSM::placeholder_witness();
+        state.read_precompile_call = true;
+        state.timestamp_to_use_for_read = 1;
+        state.timestamp_to_use_for_write = 2;
+
+        let state = Keccak256RoundFunctionFSM::allocate(cs, state);
+        let round_function = Poseidon2Goldilocks;
+
+        let memory_read_witness = ConditionalWitnessAllocator::<F, UInt256<F>> {
+            witness_source: std::sync::Arc::new(std::sync::RwLock::new(input_witness.into())),
+        };
+
+        let new_state = keccak256_precompile_inner(
+            cs,
+            &mut memory_queue,
+            &mut precompile_calls_queue,
+            memory_read_witness,
+            state,
+            &round_function,
+            2,
+        );
+
+        dbg!(new_state.witness_hook(cs)().unwrap());
+
+        drop(cs);
+
+        let output = memory_queue
+            .witness
+            .elements
+            .read()
+            .unwrap()
+            .back()
+            .unwrap()
+            .clone();
+        let mut buffer = [0u8; 32];
+        assert!(output.0.rw_flag);
+        output.0.value.to_big_endian(&mut buffer);
+
+        dbg!(hex::encode(&reference));
+        dbg!(hex::encode(&buffer));
+
+        assert_eq!(buffer, reference);
+
+        let _ = owned_cs.pad_and_shrink();
+        let mut assembly = owned_cs.into_assembly();
+        let worker = Worker::new();
+        let is_satisfied = assembly.check_if_satisfied(&worker);
+        assert!(is_satisfied);
+    }
+
+    #[test]
+    fn keccak_256_aligned_one_round() {
+        test_for_length_and_unalignment(50, 0);
+    }
+
+    #[test]
+    fn keccak_256_aligned_one_round_to_the_end() {
+        test_for_length_and_unalignment(135, 0);
+    }
+
+    #[test]
+    fn keccak_256_aligned_two_rounds() {
+        test_for_length_and_unalignment(200, 0);
+    }
+
+    #[test]
+    fn keccak_256_aligned_one_round_and_padding_round() {
+        test_for_length_and_unalignment(136, 0);
+    }
+
+    #[test]
+    fn keccak_256_unaligned_one_round() {
+        test_for_length_and_unalignment(50, 31);
+    }
+
+    #[test]
+    fn keccak_256_unaligned_one_round_to_the_end() {
+        test_for_length_and_unalignment(135, 31);
+    }
+
+    #[test]
+    fn keccak_256_unaligned_one_round_and_padding_round() {
+        test_for_length_and_unalignment(136, 31);
+    }
+
+    #[test]
+    fn keccak_256_unaligned_two_rounds() {
+        test_for_length_and_unalignment(200, 31);
+    }
 }

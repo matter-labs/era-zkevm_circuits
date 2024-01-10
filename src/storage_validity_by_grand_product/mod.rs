@@ -655,8 +655,9 @@ where
         {
             let not_keys_are_equal = keys_are_equal.negated(cs);
             if _cycle == 0 {
-                // it must always be true if we start
-                not_keys_are_equal.conditionally_enforce_true(cs, is_start);
+                // it must always be true if we start and if we have items to work with
+                let enforce = is_start.and(cs, should_pop);
+                not_keys_are_equal.conditionally_enforce_true(cs, enforce);
             }
             // finish with the old one
             // if somewhere along the way we did encounter a read at rollback depth zero (not important if there were such),

@@ -4,6 +4,7 @@ use super::*;
 
 use crate::base_structures::precompile_input_outputs::*;
 use crate::base_structures::vm_state::*;
+use crate::keccak256_round_function::buffer::ByteBuffer;
 use boojum::cs::Variable;
 use boojum::gadgets::queue::*;
 use boojum::gadgets::traits::allocatable::CSAllocatable;
@@ -19,19 +20,22 @@ use boojum::gadgets::traits::selectable::Selectable;
 use boojum::gadgets::traits::witnessable::WitnessHookable;
 use boojum::serde_utils::BigArraySerde;
 
+pub const MEMORY_QUERIES_PER_CYCLE: usize = 6;
+pub const KECCAK_PRECOMPILE_BUFFER_SIZE: usize = MEMORY_QUERIES_PER_CYCLE * 32;
+
 #[derive(Derivative, CSAllocatable, CSSelectable, CSVarLengthEncodable, WitnessHookable)]
 #[derivative(Clone, Copy, Debug)]
 #[DerivePrettyComparison("true")]
 pub struct Keccak256RoundFunctionFSM<F: SmallField> {
     pub read_precompile_call: Boolean<F>,
     pub read_unaligned_words_for_round: Boolean<F>,
+    pub padding_round: Boolean<F>,
     pub completed: Boolean<F>,
     pub keccak_internal_state: [[[UInt8<F>; BYTES_PER_WORD]; LANE_WIDTH]; LANE_WIDTH],
     pub timestamp_to_use_for_read: UInt32<F>,
     pub timestamp_to_use_for_write: UInt32<F>,
     pub precompile_call_params: Keccak256PrecompileCallParams<F>,
-    pub u8_words_buffer: [UInt8<F>; BYTES_BUFFER_SIZE],
-    pub u64_words_buffer_markers: [Boolean<F>; BUFFER_SIZE_IN_U64_WORDS],
+    pub buffer: ByteBuffer<F, KECCAK_PRECOMPILE_BUFFER_SIZE>,
 }
 
 impl<F: SmallField> CSPlaceholder<F> for Keccak256RoundFunctionFSM<F> {
@@ -42,13 +46,13 @@ impl<F: SmallField> CSPlaceholder<F> for Keccak256RoundFunctionFSM<F> {
         Self {
             read_precompile_call: boolean_false,
             read_unaligned_words_for_round: boolean_false,
+            padding_round: boolean_false,
             completed: boolean_false,
             keccak_internal_state: [[[zero_u8; BYTES_PER_WORD]; LANE_WIDTH]; LANE_WIDTH],
             timestamp_to_use_for_read: zero_u32,
             timestamp_to_use_for_write: zero_u32,
             precompile_call_params: Keccak256PrecompileCallParams::<F>::placeholder(cs),
-            u8_words_buffer: [zero_u8; BYTES_BUFFER_SIZE],
-            u64_words_buffer_markers: [boolean_false; BUFFER_SIZE_IN_U64_WORDS],
+            buffer: ByteBuffer::<F, KECCAK_PRECOMPILE_BUFFER_SIZE>::placeholder(cs),
         }
     }
 }

@@ -54,6 +54,15 @@ impl<F: SmallField> VMRegister<F> {
             },
         }
     }
+
+    pub fn conditionally_erase<CS: ConstraintSystem<F>>(
+        &mut self,
+        cs: &mut CS,
+        condition: Boolean<F>,
+    ) {
+        self.is_pointer = self.is_pointer.mask_negated(cs, condition);
+        self.value = self.value.mask_negated(cs, condition);
+    }
 }
 
 impl<F: SmallField> CSAllocatableExt<F> for VMRegister<F> {

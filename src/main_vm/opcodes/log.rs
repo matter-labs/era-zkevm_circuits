@@ -107,18 +107,22 @@ pub(crate) fn apply_log<
     };
 
     // modify the key by replacing parts for precompile call
+    let read_page_is_zero = key.inner[4].is_zero(cs);
+    let write_page_is_zero = key.inner[5].is_zero(cs);
     let precompile_memory_page_to_read = opcode_carry_parts.heap_page;
     let precompile_memory_page_to_write = opcode_carry_parts.heap_page;
+    let should_swap_read_page = Boolean::multi_and(cs, &[read_page_is_zero, is_precompile]);
+    let should_swap_write_page = Boolean::multi_and(cs, &[write_page_is_zero, is_precompile]);
     // replace bits 128..160 and 160..192
     key.inner[4] = UInt32::conditionally_select(
         cs,
-        is_precompile,
+        should_swap_read_page,
         &precompile_memory_page_to_read,
         &key.inner[4],
     );
     key.inner[5] = UInt32::conditionally_select(
         cs,
-        is_precompile,
+        should_swap_write_page,
         &precompile_memory_page_to_write,
         &key.inner[5],
     );

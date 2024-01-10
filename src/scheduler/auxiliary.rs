@@ -14,6 +14,7 @@ use boojum::gadgets::traits::round_function::CircuitRoundFunction;
 use boojum::gadgets::{boolean::Boolean, num::Num, queue::*, traits::selectable::Selectable};
 
 use crate::base_structures::precompile_input_outputs::*;
+use crate::eip_4844::input::EIP4844OutputData;
 use crate::log_sorter::input::*;
 use crate::storage_application::input::*;
 use boojum::gadgets::u8::UInt8;

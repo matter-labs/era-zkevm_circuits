@@ -448,8 +448,38 @@ pub fn create_prestate<
     let selected_src0 = src0;
     let selected_src1 = src1_register;
 
-    let src0 = VMRegister::conditionally_select(cs, swap_operands, &selected_src1, &selected_src0);
-    let src1 = VMRegister::conditionally_select(cs, swap_operands, &selected_src0, &selected_src1);
+    let mut src0 =
+        VMRegister::conditionally_select(cs, swap_operands, &selected_src1, &selected_src0);
+    let mut src1 =
+        VMRegister::conditionally_select(cs, swap_operands, &selected_src0, &selected_src1);
+
+    // Potentially erase fat pointer data if opcode shouldn't take pointers and we're not in kernel
+    // mode
+    let not_kernel_mode = is_kernel_mode.negated(cs);
+    let should_erase_src0 = {
+        use zkevm_opcode_defs::*;
+        let is_ret = decoded_opcode
+            .properties_bits
+            .boolean_for_opcode(Opcode::Ret(RetOpcode::Ok));
+        let is_ptr = decoded_opcode
+            .properties_bits
+            .boolean_for_opcode(Opcode::Ptr(PtrOpcode::Add));
+        let is_uma = decoded_opcode
+            .properties_bits
+            .boolean_for_opcode(Opcode::UMA(UMAOpcode::AuxHeapRead));
+        let is_far_call = decoded_opcode
+            .properties_bits
+            .boolean_for_opcode(Opcode::FarCall(FarCallOpcode::Delegate));
+
+        let should_erase =
+            Boolean::multi_or(cs, &[is_ret, is_ptr, is_uma, is_far_call]).negated(cs);
+        Boolean::multi_and(cs, &[src0.is_pointer, should_erase, not_kernel_mode])
+    };
+    // We erase fat pointer data from src1 if it exists in non-kernel mode
+    let should_erase_src1 = Boolean::multi_and(cs, &[src1.is_pointer, not_kernel_mode]);
+
+    src0.conditionally_erase(cs, should_erase_src0);
+    src1.conditionally_erase(cs, should_erase_src1);
 
     let src0_view = RegisterInputView::from_input_value(cs, &src0);
     let src1_view = RegisterInputView::from_input_value(cs, &src1);

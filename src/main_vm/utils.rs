@@ -356,7 +356,7 @@ pub fn resolve_memory_region_and_index_for_dest<F: SmallField, CS: ConstraintSys
     let index_with_somewhat_relative_addressing = UInt16::conditionally_select(
         cs,
         use_stack_with_push_pop,
-        &index_for_relative_with_push,
+        &current_sp, // push case, we update SP only after and the memory index should be current SP.
         &index_for_relative,
     );
 
@@ -372,7 +372,8 @@ pub fn resolve_memory_region_and_index_for_dest<F: SmallField, CS: ConstraintSys
         use_stack_with_push_pop,
         &index_for_relative_with_push,
         &current_sp,
-    );
+    ); // here we do return a new SP as this will be set on the vm state afterwards but won't
+       // affect our memory location index
 
     let location = MemoryLocation {
         page,

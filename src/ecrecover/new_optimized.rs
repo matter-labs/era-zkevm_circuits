@@ -141,6 +141,7 @@ where
 
     let (overflows, rem) = max_value.div_rem(&params.modulus_u1024);
 
+    assert!(overflows.lt(&U1024::from_word(1u64 << 32)));
     let mut max_moduluses = overflows.as_words()[0] as u32;
     if rem.is_zero().unwrap_u8() != 1 {
         max_moduluses += 1;
@@ -187,6 +188,7 @@ fn convert_uint256_to_field_element<
     max_value = max_value.saturating_sub(&U1024::from_word(1u64));
 
     let (overflows, rem) = max_value.div_rem(&params.modulus_u1024);
+    assert!(overflows.lt(&U1024::from_word(1u64 << 32)));
     let mut max_moduluses = overflows.as_words()[0] as u32;
     if rem.is_zero().unwrap_u8() != 1 {
         max_moduluses += 1;
@@ -454,7 +456,16 @@ fn wnaf_scalar_mul<F: SmallField, CS: ConstraintSystem<F>>(
                     cs.perform_lookup::<1, 2>(naf_abs_div2_table_id, &[naf.get_variable()])[0],
                 )
             };
-            let coords = &table[index.witness_hook(cs)().unwrap() as usize];
+            // We assume that only one of the values in the table will be selected (since the index
+            // <= table.len()) and so we can iteratively conditionally select over all elements.
+            let mut coords = table[0].clone();
+            table.iter().enumerate().skip(1).for_each(|(i, v)| {
+                assert!((i as u8) < u8::MAX);
+                let const_idx = UInt8::allocated_constant(cs, i as u8);
+                let correct_idx = UInt8::equals(cs, &index, &const_idx);
+                coords.0 = Selectable::conditionally_select(cs, correct_idx, &v.0, &coords.0);
+                coords.1 = Selectable::conditionally_select(cs, correct_idx, &v.1, &coords.1);
+            });
             let mut p_1 =
                 SWProjectivePoint::<F, Secp256Affine, Secp256BaseNNField<F>>::from_xy_unchecked(
                     cs,
