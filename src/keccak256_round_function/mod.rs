@@ -194,7 +194,6 @@ where
 
     if crate::config::CIRCUIT_VERSOBE {
         dbg!(can_finish_immediatelly.witness_hook(cs)());
-        dbg!(state.witness_hook(cs)());
     }
 
     state.read_precompile_call = state
@@ -207,10 +206,19 @@ where
 
     // main work cycle
     for _cycle in 0..limit {
-        dbg!(state.read_precompile_call.witness_hook(cs)());
-        dbg!(state.read_unaligned_words_for_round.witness_hook(cs)());
-        dbg!(state.padding_round.witness_hook(cs)());
-        dbg!(state.completed.witness_hook(cs)());
+        if crate::config::CIRCUIT_VERSOBE {
+            dbg!(state.read_precompile_call.witness_hook(cs)());
+            dbg!(state.read_unaligned_words_for_round.witness_hook(cs)());
+            dbg!(state.completed.witness_hook(cs)());
+            dbg!(state
+                .precompile_call_params
+                .input_memory_byte_offset
+                .witness_hook(cs)());
+            dbg!(state
+                .precompile_call_params
+                .input_memory_byte_length
+                .witness_hook(cs)());
+        }
 
         // if we are in a proper state then get the ABI from the queue
         let (precompile_call, _) = precompile_calls_queue.pop_front(cs, state.read_precompile_call);
@@ -239,7 +247,15 @@ where
 
         let params_encoding = precompile_call.key;
         let call_params = Keccak256PrecompileCallParams::from_encoding(cs, params_encoding);
-        dbg!(call_params.witness_hook(cs)());
+
+        if crate::config::CIRCUIT_VERSOBE {
+            if state.read_precompile_call.witness_hook(cs)().unwrap() == true {
+                println!(
+                    "New request for params {:?}",
+                    call_params.witness_hook(cs)().unwrap()
+                );
+            }
+        }
 
         state.precompile_call_params = Keccak256PrecompileCallParams::conditionally_select(
             cs,
@@ -321,7 +337,6 @@ where
         let mut bias_variable = should_read_in_general.get_variable();
         for _ in 0..MEMORY_QUERIES_PER_CYCLE {
             // we have a little more complex logic here, but it's homogenious
-            // dbg!(state.witness_hook(cs)());
 
             let (aligned_memory_index, unalignment) = state
                 .precompile_call_params
@@ -343,11 +358,6 @@ where
                 &state.precompile_call_params.input_memory_byte_length,
                 &at_most_meaningful_bytes_in_query,
             );
-
-            // dbg!(aligned_memory_index.witness_hook(cs)());
-            // dbg!(unalignment.witness_hook(cs)());
-            // dbg!(at_most_meaningful_bytes_in_query.witness_hook(cs)());
-            // dbg!(meaningful_bytes_in_query.witness_hook(cs)());
 
             let nothing_to_read = meaningful_bytes_in_query.is_zero(cs);
             let have_something_to_read = nothing_to_read.negated(cs);
@@ -407,6 +417,9 @@ where
 
             // fill the buffer
             let be_bytes = read_query_value.to_be_bytes(cs);
+            if crate::config::CIRCUIT_VERSOBE {
+                dbg!(be_bytes.witness_hook(cs)().map(|el| hex::encode(&el)));
+            }
             let offset = unsafe { UInt8::from_variable_unchecked(unalignment.get_variable()) };
 
             state
@@ -421,6 +434,16 @@ where
             .precompile_call_params
             .input_memory_byte_length
             .is_zero(cs);
+
+        let currently_filled = state.buffer.filled;
+        let almost_filled = UInt8::allocated_constant(cs, (KECCAK_RATE_BYTES - 1) as u8);
+        let do_one_byte_of_padding = UInt8::equals(cs, &currently_filled, &almost_filled);
+        let mut input = state
+            .buffer
+            .consume::<CS, KECCAK_RATE_BYTES>(cs, boolean_true);
+
+        // we also need to handle the case when memory reads finished, but we have something in the buffer still
+        let buffer_is_empty = state.buffer.filled.is_zero(cs);
         let no_extra_padding_round_required = state
             .precompile_call_params
             .needs_full_padding_round
@@ -429,18 +452,11 @@ where
             cs,
             &[
                 zero_bytes_left,
+                buffer_is_empty,
                 state.read_unaligned_words_for_round,
                 no_extra_padding_round_required,
             ],
         );
-
-        let currently_filled = state.buffer.filled;
-        let almost_filled = UInt8::allocated_constant(cs, (KECCAK_RATE_BYTES - 1) as u8);
-        let do_one_byte_of_padding = UInt8::equals(cs, &currently_filled, &almost_filled);
-        let mut input = state
-            .buffer
-            .consume::<CS, KECCAK_RATE_BYTES>(cs, boolean_true);
-        dbg!(input.witness_hook(cs)().map(|el| hex::encode(&el)));
 
         let mut tmp = currently_filled.into_num();
         let pad_constant = UInt8::allocated_constant(cs, 0x01);
@@ -468,7 +484,9 @@ where
 
         let input =
             UInt8::<F>::parallel_select(cs, state.padding_round, &full_padding_buffer, &input);
-        dbg!(input.witness_hook(cs)().map(|el| hex::encode(&el)));
+        if crate::config::CIRCUIT_VERSOBE {
+            dbg!(input.witness_hook(cs)().map(|el| hex::encode(&el)));
+        }
 
         // manually absorb and run round function
         let squeezed =
@@ -482,6 +500,11 @@ where
         let write_result = finished_processing;
 
         let result = UInt256::from_be_bytes(cs, squeezed);
+        if crate::config::CIRCUIT_VERSOBE {
+            if finished_processing.witness_hook(cs)().unwrap() {
+                dbg!(result.witness_hook(cs)());
+            }
+        }
 
         let write_query = MemoryQuery {
             timestamp: state.timestamp_to_use_for_write,
@@ -512,6 +535,7 @@ where
             &[
                 state.read_unaligned_words_for_round,
                 zero_bytes_left,
+                buffer_is_empty,
                 state.precompile_call_params.needs_full_padding_round,
             ],
         );
