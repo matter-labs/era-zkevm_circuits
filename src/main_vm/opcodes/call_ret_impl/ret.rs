@@ -98,6 +98,10 @@ where
         }
     }
 
+    // on panic, we should never return any data. in this case, zero out src0 data
+    let mut src0 = common_opcode_state.src0.clone();
+    src0.conditionally_erase(cs, is_ret_panic);
+
     let current_callstack_entry = draft_vm_state.callstack.current_context.saved_context;
 
     // we may want to return to label
@@ -172,7 +176,7 @@ where
     let mut non_local_frame_exceptions = ArrayVec::<Boolean<F>, 4>::new();
 
     let forward_fat_pointer = forwarding_data.forward_fat_pointer;
-    let src0_is_integer = common_opcode_state.src0_view.is_ptr.negated(cs);
+    let src0_is_integer = src0.is_pointer.negated(cs);
     let is_far_return = is_local_frame.negated(cs);
 
     // resolve returndata pointer if forwarded
