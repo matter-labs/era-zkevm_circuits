@@ -9,47 +9,50 @@ const TABLE_NAME: &'static str = "FIXEDBASEMUL table";
 
 #[derive(Derivative)]
 #[derivative(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct FixedBaseMulTable<const INDEX: usize, const B: u64>;
+pub struct FixedBaseMulTable<const U32_WORD_INDEX: usize, const BYTE_OFFSET: usize>;
 
 // Allows for a radix scalar mul by storing all potential exponentiations
 // of the generator with 0..255
-pub fn create_fixed_base_mul_table<F: SmallField, const INDEX: usize, const B: u64>(
-) -> LookupTable<F, 3> {
-    assert!(INDEX < 8);
-    assert!(B < 32);
-    let mut all_keys = Vec::with_capacity(1 << 8);
-    for a in 0..=u8::MAX {
-        let key = smallvec::smallvec![F::from_u64_unchecked(a as u64)];
-        all_keys.push(key);
+pub fn create_fixed_base_mul_table<
+    F: SmallField,
+    const U32_WORD_INDEX: usize,
+    const BYTE_OFFSET: usize,
+>() -> LookupTable<F, 3> {
+    assert!(U32_WORD_INDEX < 8);
+    assert!(BYTE_OFFSET < 32);
+    let mut content = Vec::with_capacity(1 << 8);
+    // point of infinity is encoded as (0,0), and we handle it via select in the multiplication routine
+    content.push([F::ZERO, F::ZERO, F::ZERO]);
+    let mut base_power = Fr::one();
+    for _ in 0..(BYTE_OFFSET * 8) {
+        base_power.double();
     }
-    let mut generator = Secp256Affine::one();
-    generator.negate();
-    let r = Fr::from_str("256").unwrap();
-    LookupTable::new_from_keys_and_generation_function(
-        &all_keys,
-        TABLE_NAME.to_string(),
-        1,
-        |keys| {
-            let a = keys[0].as_u64_reduced();
-            let b = r.pow([B]);
-            let mut exp = Fr::from_str(&a.to_string()).unwrap();
-            exp.mul_assign(&b);
-            let result = generator.mul(exp);
-            let result = result.into_affine();
-            let is_even = INDEX % 2 == 0;
-            let res = [result.x, result.y]
-                .iter()
-                .map(|c| {
-                    let index = INDEX / 2;
-                    let segment = c.into_repr().0[index];
-                    if is_even {
-                        F::from_u64_unchecked(segment & (u32::MAX as u64))
-                    } else {
-                        F::from_u64_unchecked(segment >> 32)
-                    }
-                })
-                .collect::<Vec<F>>();
-            smallvec::smallvec![res[0], res[1]]
-        },
-    )
+    let base = Secp256Affine::one();
+    let base = base.mul(base_power);
+    let mut current = base;
+    let base = base.into_affine();
+    let repr_word_index = U32_WORD_INDEX / 2;
+    let take_low = U32_WORD_INDEX % 2 == 0;
+    for a in 1..=u8::MAX {
+        let current_affine = current.into_affine();
+        let (x, y) = current_affine.as_xy();
+        let x_repr_word = x.into_repr().as_ref()[repr_word_index];
+        let y_repr_word = y.into_repr().as_ref()[repr_word_index];
+        if take_low {
+            content.push([
+                F::from_u64_unchecked(a as u64),
+                F::from_u64_unchecked((x_repr_word as u32) as u64),
+                F::from_u64_unchecked((y_repr_word as u32) as u64),
+            ]);
+        } else {
+            content.push([
+                F::from_u64_unchecked(a as u64),
+                F::from_u64_unchecked(x_repr_word >> 32),
+                F::from_u64_unchecked(y_repr_word >> 32),
+            ]);
+        }
+        current.add_assign_mixed(&base);
+    }
+    assert_eq!(content.len(), 256);
+    LookupTable::new_from_content(content, TABLE_NAME.to_string(), 1)
 }
