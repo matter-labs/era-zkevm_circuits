@@ -583,6 +583,7 @@ fn to_width_4_window_form<F: SmallField, CS: ConstraintSystem<F>>(
     result
 }
 
+#[deprecated]
 fn wnaf_scalar_mul<F: SmallField, CS: ConstraintSystem<F>>(
     cs: &mut CS,
     mut point: SWProjectivePoint<F, Secp256Affine, Secp256BaseNNField<F>>,
@@ -1581,11 +1582,11 @@ mod test {
         let table = create_and8_table();
         owned_cs.add_lookup_table::<And8Table, 3>(table);
 
-        let table = create_naf_abs_div2_table();
-        owned_cs.add_lookup_table::<NafAbsDiv2Table, 3>(table);
+        // let table = create_naf_abs_div2_table();
+        // owned_cs.add_lookup_table::<NafAbsDiv2Table, 3>(table);
 
-        let table = create_wnaf_decomp_table();
-        owned_cs.add_lookup_table::<WnafDecompTable, 3>(table);
+        // let table = create_wnaf_decomp_table();
+        // owned_cs.add_lookup_table::<WnafDecompTable, 3>(table);
 
         seq_macro::seq!(C in 0..32 {
             let table = create_fixed_base_mul_table::<F, 0, C>();
