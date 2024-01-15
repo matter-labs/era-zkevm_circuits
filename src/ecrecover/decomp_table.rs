@@ -11,10 +11,10 @@ const TABLE_NAME: &'static str = "WNAFDECOMP table";
 #[derivative(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct WnafDecompTable;
 
-const GLV_WINDOW_SIZE: usize = 2;
-const TABLE_SIZE: i8 = 1 << (GLV_WINDOW_SIZE + 1);
-const HALF_TABLE_SIZE: i8 = 1 << GLV_WINDOW_SIZE;
-const MASK_FOR_MOD_TABLE_SIZE: u8 = (TABLE_SIZE as u8) - 1;
+pub const WNAF_WINDOW_SIZE: usize = 2;
+pub const WNAF_TABLE_SIZE: i8 = 1 << (WNAF_WINDOW_SIZE + 1);
+const HALF_TABLE_SIZE: i8 = 1 << WNAF_WINDOW_SIZE;
+const MASK_FOR_MOD_TABLE_SIZE: u8 = (WNAF_TABLE_SIZE as u8) - 1;
 
 // Lookups for wNAF decomposition of scalars.
 pub fn create_wnaf_decomp_table<F: SmallField>() -> LookupTable<F, 3> {
@@ -35,7 +35,7 @@ pub fn create_wnaf_decomp_table<F: SmallField>() -> LookupTable<F, 3> {
                 if a % 2 == 1 {
                     let mut naf = (a & MASK_FOR_MOD_TABLE_SIZE) as i8;
                     if naf >= HALF_TABLE_SIZE {
-                        naf -= TABLE_SIZE
+                        naf -= WNAF_TABLE_SIZE
                     };
 
                     let naf_abs = naf.abs() as u8;
