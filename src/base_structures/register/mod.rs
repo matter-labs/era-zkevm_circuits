@@ -63,6 +63,17 @@ impl<F: SmallField> VMRegister<F> {
         self.is_pointer = self.is_pointer.mask_negated(cs, condition);
         self.value = self.value.mask_negated(cs, condition);
     }
+
+    pub fn conditionally_erase_fat_pointer_data<CS: ConstraintSystem<F>>(
+        &mut self,
+        cs: &mut CS,
+        condition: Boolean<F>,
+    ) {
+        self.is_pointer = self.is_pointer.mask_negated(cs, condition);
+        // we need to erase bits 32-64 and 64-96
+        self.value.inner[1] = self.value.inner[1].mask_negated(cs, condition);
+        self.value.inner[2] = self.value.inner[2].mask_negated(cs, condition);
+    }
 }
 
 impl<F: SmallField> CSAllocatableExt<F> for VMRegister<F> {

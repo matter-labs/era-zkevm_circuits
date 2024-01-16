@@ -456,7 +456,7 @@ pub fn create_prestate<
     // Potentially erase fat pointer data if opcode shouldn't take pointers and we're not in kernel
     // mode
     let not_kernel_mode = is_kernel_mode.negated(cs);
-    let should_erase_src0 = {
+    let should_erase_src0_ptr_data = {
         use zkevm_opcode_defs::*;
         let is_ret = decoded_opcode
             .properties_bits
@@ -476,10 +476,10 @@ pub fn create_prestate<
         Boolean::multi_and(cs, &[src0.is_pointer, should_erase, not_kernel_mode])
     };
     // We erase fat pointer data from src1 if it exists in non-kernel mode
-    let should_erase_src1 = Boolean::multi_and(cs, &[src1.is_pointer, not_kernel_mode]);
+    let should_erase_src1_ptr_data = Boolean::multi_and(cs, &[src1.is_pointer, not_kernel_mode]);
 
-    src0.conditionally_erase(cs, should_erase_src0);
-    src1.conditionally_erase(cs, should_erase_src1);
+    src0.conditionally_erase_fat_pointer_data(cs, should_erase_src0_ptr_data);
+    src1.conditionally_erase_fat_pointer_data(cs, should_erase_src1_ptr_data);
 
     let src0_view = RegisterInputView::from_input_value(cs, &src0);
     let src1_view = RegisterInputView::from_input_value(cs, &src1);

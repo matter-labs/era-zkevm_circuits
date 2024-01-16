@@ -78,7 +78,8 @@ impl<F: SmallField, const BUFFER_SIZE: usize> ByteBuffer<F, BUFFER_SIZE> {
         meaningful_bytes: UInt8<F>,
         mapping_function: BufferMappingFunction<F, CS, N, BUFFER_SIZE>,
     ) {
-        // we do naive implementation of the shift register
+        assert!(N < 128); // kind of arbitrary constant here, in practice we would only use 32
+                          // we do naive implementation of the shift register
         let mut offset = offset.into_num();
         let one_num = Num::allocated_constant(cs, F::ONE);
         let zero_u8 = UInt8::zero(cs);
@@ -104,11 +105,16 @@ impl<F: SmallField, const BUFFER_SIZE: usize> ByteBuffer<F, BUFFER_SIZE> {
         // dbg!(shifted_input.witness_hook(cs)());
 
         let use_byte_for_place_mask = mapping_function(cs, meaningful_bytes, self.filled, [(); N]);
+        let mut counter = meaningful_bytes.into_num();
+        let mut shifted_buffer_exhausted = meaningful_bytes.is_zero(cs);
         // TODO: transpose to use linear combination
         for (idx, src) in shifted_input.into_iter().enumerate() {
             // buffer above is shifted all the way to the left, so if byte number 0 can use any of 0..BUFFER_SIZE markers,
             // then for byte number 1 we can only use markers 1..BUFFER_SIZE markers, and so on, and byte number 1 can never go into
             // buffer position 0
+
+            // we also need to determine if we ever "use" this byte or should zero it out for later padding procedure
+            let src = src.mask_negated(cs, shifted_buffer_exhausted);
             let markers = &use_byte_for_place_mask[..(BUFFER_SIZE - idx)];
             let dsts = &mut self.bytes[idx..];
             assert_eq!(markers.len(), dsts.len());
@@ -116,6 +122,12 @@ impl<F: SmallField, const BUFFER_SIZE: usize> ByteBuffer<F, BUFFER_SIZE> {
             for (dst, flag) in dsts.iter_mut().zip(markers.iter()) {
                 *dst = UInt8::conditionally_select(cs, *flag, &src, &*dst);
             }
+
+            counter = counter.sub(cs, &one_num);
+            // this will underflow and walk around the field range, but not important for our ranges of N
+            let now_exhausted = counter.is_zero(cs);
+            shifted_buffer_exhausted =
+                Boolean::multi_or(cs, &[now_exhausted, shifted_buffer_exhausted]);
         }
         self.filled = self.filled.add_no_overflow(cs, meaningful_bytes);
         // compare no overflow
