@@ -1007,6 +1007,15 @@ where
 
     let new_r1 = final_fat_ptr.into_register(cs);
 
+    if crate::config::CIRCUIT_VERSOBE {
+        if (execute.witness_hook(&*cs))().unwrap_or(false) {
+            println!(
+                "R1 value after far call is {:?}",
+                new_r1.witness_hook(cs)().unwrap()
+            );
+        }
+    }
+
     let one = Num::allocated_constant(cs, F::ONE);
 
     let r2_low = Num::fma(

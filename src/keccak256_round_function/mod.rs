@@ -2,6 +2,7 @@ use super::*;
 
 use boojum::field::SmallField;
 
+use boojum::config::*;
 use boojum::cs::traits::cs::ConstraintSystem;
 use boojum::gadgets::boolean::Boolean;
 use boojum::gadgets::traits::selectable::Selectable;
@@ -133,6 +134,10 @@ fn trivial_mapping_function<
         tmp = tmp.sub(cs, &one_num);
     }
 
+    // if crate::config::CIRCUIT_VERSOBE {
+    //     dbg!(result.witness_hook(cs)().unwrap());
+    // }
+
     result
 }
 
@@ -204,11 +209,23 @@ where
         .mask_negated(cs, can_finish_immediatelly);
     state.completed = Boolean::multi_or(cs, &[state.completed, can_finish_immediatelly]);
 
+    #[allow(unused_variables)]
+    let mut keccak_self_verifier = None;
+    if <CS::Config as CSConfig>::DebugConfig::PERFORM_RUNTIME_ASSERTS == true {
+        use zkevm_opcode_defs::sha3::Digest;
+        if state.read_precompile_call.witness_hook(cs)().unwrap() == true {
+            keccak_self_verifier = Some((true, zkevm_opcode_defs::sha3::Keccak256::new()));
+        } else {
+            keccak_self_verifier = Some((false, zkevm_opcode_defs::sha3::Keccak256::new()));
+        }
+    }
+
     // main work cycle
     for _cycle in 0..limit {
         if crate::config::CIRCUIT_VERSOBE {
             dbg!(state.read_precompile_call.witness_hook(cs)());
             dbg!(state.read_unaligned_words_for_round.witness_hook(cs)());
+            dbg!(state.padding_round.witness_hook(cs)());
             dbg!(state.completed.witness_hook(cs)());
             dbg!(state
                 .precompile_call_params
@@ -218,6 +235,14 @@ where
                 .precompile_call_params
                 .input_memory_byte_length
                 .witness_hook(cs)());
+        }
+
+        if <CS::Config as CSConfig>::DebugConfig::PERFORM_RUNTIME_ASSERTS == true {
+            use zkevm_opcode_defs::sha3::Digest;
+            if state.read_precompile_call.witness_hook(cs)().unwrap() == true {
+                *keccak_self_verifier.as_mut().unwrap() =
+                    (true, zkevm_opcode_defs::sha3::Keccak256::new());
+            }
         }
 
         // if we are in a proper state then get the ABI from the queue
@@ -335,9 +360,10 @@ where
         };
 
         let mut bias_variable = should_read_in_general.get_variable();
+        // logic in short - we always try to read from memory into buffer,
+        // and every time execute 1 keccak256 round function
         for _ in 0..MEMORY_QUERIES_PER_CYCLE {
             // we have a little more complex logic here, but it's homogenious
-
             let (aligned_memory_index, unalignment) = state
                 .precompile_call_params
                 .input_memory_byte_offset
@@ -417,16 +443,25 @@ where
 
             // fill the buffer
             let be_bytes = read_query_value.to_be_bytes(cs);
-            if crate::config::CIRCUIT_VERSOBE {
-                dbg!(be_bytes.witness_hook(cs)().map(|el| hex::encode(&el)));
-            }
+            // if crate::config::CIRCUIT_VERSOBE {
+            //     dbg!(be_bytes.witness_hook(cs)().map(|el| hex::encode(&el)));
+            // }
             let offset = unsafe { UInt8::from_variable_unchecked(unalignment.get_variable()) };
+
+            if crate::config::CIRCUIT_VERSOBE {
+                dbg!(hex::encode(&state.buffer.bytes.witness_hook(cs)().unwrap()));
+                dbg!(hex::encode(&be_bytes.witness_hook(cs)().unwrap()));
+                dbg!(bytes_to_fill.witness_hook(cs)().unwrap());
+            }
 
             state
                 .buffer
                 .fill_with_bytes(cs, &be_bytes, offset, bytes_to_fill, mapping_function);
-        }
 
+            if crate::config::CIRCUIT_VERSOBE {
+                dbg!(hex::encode(&state.buffer.bytes.witness_hook(cs)().unwrap()));
+            }
+        }
         // now actually run keccak permutation
 
         // we either mask for padding, or mask in full if it's full padding round
@@ -438,12 +473,12 @@ where
         let currently_filled = state.buffer.filled;
         let almost_filled = UInt8::allocated_constant(cs, (KECCAK_RATE_BYTES - 1) as u8);
         let do_one_byte_of_padding = UInt8::equals(cs, &currently_filled, &almost_filled);
+        // NOTE: we have already precomputed if we will need a full padding round, so we just take something form buffer
+        // and run keccak premutation
         let mut input = state
             .buffer
             .consume::<CS, KECCAK_RATE_BYTES>(cs, boolean_true);
-
-        // we also need to handle the case when memory reads finished, but we have something in the buffer still
-        let buffer_is_empty = state.buffer.filled.is_zero(cs);
+        let buffer_now_empty = state.buffer.filled.is_zero(cs);
         let no_extra_padding_round_required = state
             .precompile_call_params
             .needs_full_padding_round
@@ -452,11 +487,37 @@ where
             cs,
             &[
                 zero_bytes_left,
-                buffer_is_empty,
+                buffer_now_empty,
                 state.read_unaligned_words_for_round,
                 no_extra_padding_round_required,
             ],
         );
+
+        if <CS::Config as CSConfig>::DebugConfig::PERFORM_RUNTIME_ASSERTS == true {
+            use zkevm_opcode_defs::sha3::Digest;
+            if state.padding_round.witness_hook(cs)().unwrap() == false {
+                if apply_padding.witness_hook(cs)().unwrap() == true {
+                    let bytes_to_feed = currently_filled.witness_hook(cs)().unwrap();
+                    let buffer_to_feed = input.witness_hook(cs)().unwrap();
+                    dbg!(hex::encode(&buffer_to_feed[..(bytes_to_feed as usize)]));
+                    keccak_self_verifier
+                        .as_mut()
+                        .unwrap()
+                        .1
+                        .update(&buffer_to_feed[..(bytes_to_feed as usize)]);
+                } else {
+                    let buffer_to_feed = input.witness_hook(cs)().unwrap();
+                    dbg!(hex::encode(&buffer_to_feed[..]));
+                    keccak_self_verifier
+                        .as_mut()
+                        .unwrap()
+                        .1
+                        .update(&buffer_to_feed[..]);
+                }
+            } else {
+                // we absorb nothing, and "finalize" will take care of the rest
+            }
+        }
 
         let mut tmp = currently_filled.into_num();
         let pad_constant = UInt8::allocated_constant(cs, 0x01);
@@ -495,13 +556,30 @@ where
         let absorbed_and_padded = apply_padding;
         // dbg!(absorbed_and_padded.witness_hook(cs)());
         // dbg!(state.padding_round.witness_hook(cs)());
-        let finished_processing =
+        let finished_processing_current_request =
             Boolean::multi_or(cs, &[absorbed_and_padded, state.padding_round]);
-        let write_result = finished_processing;
+        let write_result = finished_processing_current_request;
+
+        if <CS::Config as CSConfig>::DebugConfig::PERFORM_RUNTIME_ASSERTS == true {
+            use zkevm_opcode_defs::sha3::Digest;
+            if write_result.witness_hook(cs)().unwrap() == true {
+                if keccak_self_verifier.as_mut().unwrap().0 == true {
+                    keccak_self_verifier.as_mut().unwrap().0 = false;
+                    let mut output = [0u8; 32];
+                    let internal_state = std::mem::replace(
+                        &mut keccak_self_verifier.as_mut().unwrap().1,
+                        zkevm_opcode_defs::sha3::Keccak256::new(),
+                    );
+                    output.copy_from_slice(internal_state.finalize().as_slice());
+                    let circuit_result = squeezed.witness_hook(cs)().unwrap();
+                    assert_eq!(output, circuit_result);
+                }
+            }
+        }
 
         let result = UInt256::from_be_bytes(cs, squeezed);
         if crate::config::CIRCUIT_VERSOBE {
-            if finished_processing.witness_hook(cs)().unwrap() {
+            if finished_processing_current_request.witness_hook(cs)().unwrap() {
                 dbg!(result.witness_hook(cs)());
             }
         }
@@ -535,7 +613,7 @@ where
             &[
                 state.read_unaligned_words_for_round,
                 zero_bytes_left,
-                buffer_is_empty,
+                buffer_now_empty,
                 state.precompile_call_params.needs_full_padding_round,
             ],
         );
@@ -996,6 +1074,11 @@ mod test {
     }
 
     #[test]
+    fn keccak_256_aligned_two_rounds_but_one_read_round() {
+        test_for_length_and_unalignment(180, 0);
+    }
+
+    #[test]
     fn keccak_256_aligned_one_round_and_padding_round() {
         test_for_length_and_unalignment(136, 0);
     }
@@ -1018,5 +1101,10 @@ mod test {
     #[test]
     fn keccak_256_unaligned_two_rounds() {
         test_for_length_and_unalignment(200, 31);
+    }
+
+    #[test]
+    fn keccak_256_unaligned_two_rounds_but_one_read_round() {
+        test_for_length_and_unalignment(166, 22);
     }
 }
