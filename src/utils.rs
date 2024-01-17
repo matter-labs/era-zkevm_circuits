@@ -4,7 +4,7 @@ use boojum::cs::Variable;
 use boojum::field::SmallField;
 use boojum::gadgets::boolean::Boolean;
 use boojum::gadgets::num::Num;
-use boojum::gadgets::queue::QueueTailState;
+use boojum::gadgets::queue::{QueueState, QueueTailState};
 use boojum::gadgets::traits::round_function::CircuitRoundFunction;
 use boojum::gadgets::traits::selectable::Selectable;
 use boojum::gadgets::u32::UInt32;
@@ -134,4 +134,22 @@ pub fn accumulate_grand_products<
         *lhs = Num::conditionally_select(cs, should_accumulate, &new_lhs, &lhs);
         *rhs = Num::conditionally_select(cs, should_accumulate, &new_rhs, &rhs);
     }
+}
+
+pub fn is_equal_queue_state<F: SmallField, CS: ConstraintSystem<F>, const N: usize>(
+    cs: &mut CS,
+    a: &QueueState<F, N>,
+    b: &QueueState<F, N>,
+) -> Boolean<F> {
+    let head_parts_are_equal: [Boolean<F>; N] =
+        std::array::from_fn(|i| Num::equals(cs, &a.head[i], &b.head[i]));
+    let heads_are_equal = Boolean::multi_and(cs, &head_parts_are_equal);
+
+    let tail_parts_are_equal: [Boolean<F>; N] =
+        std::array::from_fn(|i| Num::equals(cs, &a.tail.tail[i], &b.tail.tail[i]));
+    let tail_are_equal = Boolean::multi_and(cs, &tail_parts_are_equal);
+
+    let lengths_are_equal = UInt32::equals(cs, &a.tail.length, &b.tail.length);
+
+    Boolean::multi_and(cs, &[heads_are_equal, tail_are_equal, lengths_are_equal])
 }

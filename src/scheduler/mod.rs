@@ -37,6 +37,7 @@ use crate::fsm_input_output::circuit_inputs::INPUT_OUTPUT_COMMITMENT_LENGTH;
 use crate::linear_hasher::input::LinearHasherOutputData;
 use crate::recursion::VK_COMMITMENT_LENGTH;
 use crate::scheduler::auxiliary::NUM_CIRCUIT_TYPES_TO_SCHEDULE;
+use crate::utils::is_equal_queue_state;
 use boojum::gadgets::num::Num;
 use boojum::gadgets::recursion::recursive_tree_hasher::RecursiveTreeHasher;
 
@@ -574,48 +575,112 @@ pub fn scheduler_function<
     // we can potentially skip some circuits
     let mut skip_flags = [None; NUM_CIRCUIT_TYPES_TO_SCHEDULE];
     // we can skip everything except VM
-    skip_flags[(BaseLayerCircuitType::DecommitmentsFilter as u8 as usize) - 1] = Some(
-        decommittments_sorter_circuit_input
+    // and if we skip, then we should ensure some invariants over outputs!
+
+    // decommits sorter must output empty queue
+    {
+        let should_skip = decommittments_sorter_circuit_input
             .initial_queue_state
             .tail
             .length
-            .is_zero(cs),
-    );
-    skip_flags[(BaseLayerCircuitType::Decommiter as u8 as usize) - 1] = Some(
-        code_decommitter_circuit_input
+            .is_zero(cs);
+
+        let output_queue_is_empty = decommits_sorter_observable_output
+            .final_queue_state
+            .tail
+            .length
+            .is_zero(cs);
+        output_queue_is_empty.conditionally_enforce_true(cs, should_skip);
+
+        skip_flags[(BaseLayerCircuitType::DecommitmentsFilter as u8 as usize) - 1] =
+            Some(should_skip);
+    }
+
+    // decommitter should produce the same memory sequence
+    {
+        let should_skip = code_decommitter_circuit_input
             .sorted_requests_queue_initial_state
             .tail
             .length
-            .is_zero(cs),
-    );
-    skip_flags[(BaseLayerCircuitType::LogDemultiplexer as u8 as usize) - 1] = Some(
-        log_demux_circuit_input
+            .is_zero(cs);
+
+        let input_state = code_decommitter_circuit_input.memory_queue_initial_state;
+        let output_state = code_decommitter_observable_output.memory_queue_final_state;
+
+        let same_state = is_equal_queue_state(cs, &input_state, &output_state);
+        same_state.conditionally_enforce_true(cs, should_skip);
+
+        skip_flags[(BaseLayerCircuitType::Decommiter as u8 as usize) - 1] = Some(should_skip);
+    }
+
+    // demux must produce empty outputs
+    {
+        let should_skip = log_demux_circuit_input
             .initial_log_queue_state
             .tail
             .length
-            .is_zero(cs),
-    );
-    skip_flags[(BaseLayerCircuitType::KeccakPrecompile as u8 as usize) - 1] = Some(
-        log_demuxer_observable_output
+            .is_zero(cs);
+
+        for subqueue in log_demuxer_observable_output
+            .all_output_queues_refs()
+            .into_iter()
+        {
+            let output_queue_is_empty = subqueue.tail.length.is_zero(cs);
+            output_queue_is_empty.conditionally_enforce_true(cs, should_skip);
+        }
+
+        skip_flags[(BaseLayerCircuitType::LogDemultiplexer as u8 as usize) - 1] = Some(should_skip);
+    }
+
+    // keccak, sha256 and ecrecover must not modify memory
+    {
+        let should_skip = log_demuxer_observable_output
             .keccak256_access_queue_state
             .tail
             .length
-            .is_zero(cs),
-    );
-    skip_flags[(BaseLayerCircuitType::Sha256Precompile as u8 as usize) - 1] = Some(
-        log_demuxer_observable_output
+            .is_zero(cs);
+
+        let input_state = code_decommitter_observable_output.memory_queue_final_state;
+        let output_state = keccak256_observable_output.final_memory_state;
+
+        let same_state = is_equal_queue_state(cs, &input_state, &output_state);
+        same_state.conditionally_enforce_true(cs, should_skip);
+
+        skip_flags[(BaseLayerCircuitType::KeccakPrecompile as u8 as usize) - 1] = Some(should_skip);
+    }
+    {
+        let should_skip = log_demuxer_observable_output
             .sha256_access_queue_state
             .tail
             .length
-            .is_zero(cs),
-    );
-    skip_flags[(BaseLayerCircuitType::EcrecoverPrecompile as u8 as usize) - 1] = Some(
-        log_demuxer_observable_output
+            .is_zero(cs);
+
+        let input_state = keccak256_observable_output.final_memory_state;
+        let output_state = sha256_observable_output.final_memory_state;
+
+        let same_state = is_equal_queue_state(cs, &input_state, &output_state);
+        same_state.conditionally_enforce_true(cs, should_skip);
+
+        skip_flags[(BaseLayerCircuitType::Sha256Precompile as u8 as usize) - 1] = Some(should_skip);
+    }
+    {
+        let should_skip = log_demuxer_observable_output
             .ecrecover_access_queue_state
             .tail
             .length
-            .is_zero(cs),
-    );
+            .is_zero(cs);
+
+        let input_state = sha256_observable_output.final_memory_state;
+        let output_state = ecrecover_observable_output.final_memory_state;
+
+        let same_state = is_equal_queue_state(cs, &input_state, &output_state);
+        same_state.conditionally_enforce_true(cs, should_skip);
+
+        skip_flags[(BaseLayerCircuitType::EcrecoverPrecompile as u8 as usize) - 1] =
+            Some(should_skip);
+    }
+
+    // well, in the very unlikely case of no RAM requests (that is unreachable because VM always starts) we just skip it as is
     skip_flags[(BaseLayerCircuitType::RamValidation as u8 as usize) - 1] = Some(
         ram_validation_circuit_input
             .unsorted_queue_initial_state
@@ -623,24 +688,93 @@ pub fn scheduler_function<
             .length
             .is_zero(cs),
     );
-    skip_flags[(BaseLayerCircuitType::StorageFilter as u8 as usize) - 1] =
-        Some(storage_queues_state[0].tail.length.is_zero(cs));
-    skip_flags[(BaseLayerCircuitType::StorageApplicator as u8 as usize) - 1] =
-        Some(filtered_storage_queues_state[0].tail.length.is_zero(cs));
-    skip_flags[(BaseLayerCircuitType::EventsRevertsFilter as u8 as usize) - 1] = Some(
-        log_demuxer_observable_output
+    // storage filter must produce an empty output
+    {
+        let should_skip = storage_queues_state[0].tail.length.is_zero(cs);
+
+        let output_queue_is_empty = filtered_storage_queues_state[0].tail.length.is_zero(cs);
+        output_queue_is_empty.conditionally_enforce_true(cs, should_skip);
+
+        skip_flags[(BaseLayerCircuitType::StorageFilter as u8 as usize) - 1] = Some(should_skip);
+    }
+    // storage application must leave root untouched
+    {
+        let should_skip = filtered_storage_queues_state[0].tail.length.is_zero(cs);
+
+        let initial_root = initial_state_roots[0];
+        let initial_enumeration_counter = initial_enumeration_counters[0];
+        let final_root = final_state_roots[0];
+        let final_enumeration_counter = final_enumeration_counters[0];
+
+        let diffs_hash = storage_diffs_for_compression[0];
+
+        let root_parts_are_equal: [Boolean<F>; 32] =
+            std::array::from_fn(|i| UInt8::equals(cs, &initial_root[i], &final_root[i]));
+        let roots_are_equal = Boolean::multi_and(cs, &root_parts_are_equal);
+
+        let enumeration_counters_are_equal_low = UInt32::equals(
+            cs,
+            &initial_enumeration_counter[0],
+            &final_enumeration_counter[0],
+        );
+        let enumeration_counters_are_equal_high = UInt32::equals(
+            cs,
+            &initial_enumeration_counter[1],
+            &final_enumeration_counter[1],
+        );
+
+        let diffs_parts_are_zero: [Boolean<F>; 32] = diffs_hash.map(|el| el.is_zero(cs));
+        let diffs_hash_is_zero = Boolean::multi_and(cs, &diffs_parts_are_zero);
+
+        let root_is_unchanged = Boolean::multi_and(
+            cs,
+            &[
+                roots_are_equal,
+                enumeration_counters_are_equal_low,
+                enumeration_counters_are_equal_high,
+                diffs_hash_is_zero,
+            ],
+        );
+        root_is_unchanged.conditionally_enforce_true(cs, should_skip);
+
+        skip_flags[(BaseLayerCircuitType::StorageApplicator as u8 as usize) - 1] =
+            Some(should_skip);
+    }
+    // events and l2 to l1 messages filters should produce empty output
+    {
+        let should_skip = log_demuxer_observable_output
             .events_access_queue_state
             .tail
             .length
-            .is_zero(cs),
-    );
-    skip_flags[(BaseLayerCircuitType::L1MessagesRevertsFilter as u8 as usize) - 1] = Some(
-        log_demuxer_observable_output
+            .is_zero(cs);
+
+        let output_queue_is_empty = events_sorter_observable_output
+            .final_queue_state
+            .tail
+            .length
+            .is_zero(cs);
+        output_queue_is_empty.conditionally_enforce_true(cs, should_skip);
+
+        skip_flags[(BaseLayerCircuitType::EventsRevertsFilter as u8 as usize) - 1] =
+            Some(should_skip);
+    }
+    {
+        let should_skip = log_demuxer_observable_output
             .l1messages_access_queue_state
             .tail
             .length
-            .is_zero(cs),
-    );
+            .is_zero(cs);
+
+        let output_queue_is_empty = l1messages_sorter_observable_output
+            .final_queue_state
+            .tail
+            .length
+            .is_zero(cs);
+        output_queue_is_empty.conditionally_enforce_true(cs, should_skip);
+
+        skip_flags[(BaseLayerCircuitType::L1MessagesRevertsFilter as u8 as usize) - 1] =
+            Some(should_skip);
+    }
 
     // for (idx, el) in skip_flags.iter().enumerate() {
     //     if let Some(el) = el {
