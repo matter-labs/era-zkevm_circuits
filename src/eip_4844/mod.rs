@@ -373,6 +373,7 @@ pub fn zksync_pubdata_into_monomial_form_poly(input: &[u8]) -> Vec<Bls12_381Fr> 
         buffer[..BLOB_CHUNK_SIZE].copy_from_slice(bytes);
         let mut repr = <Bls12_381Fr as boojum::pairing::ff::PrimeField>::Repr::default();
         repr.read_le(&buffer[..]).unwrap();
+        // Since repr only has 31 bytes, repr is guaranteed to be below the modulu
         let as_field_element = Bls12_381Fr::from_repr(repr).unwrap();
         poly.push(as_field_element);
     }
@@ -381,13 +382,26 @@ pub fn zksync_pubdata_into_monomial_form_poly(input: &[u8]) -> Vec<Bls12_381Fr> 
 }
 
 pub fn ethereum_4844_pubdata_into_bitreversed_lagrange_form_poly(input: &[u8]) -> Vec<Bls12_381Fr> {
+    // Ethereum's blob data requires that all field element representations are canonical, but we will handle
+    // a generic case. For BLS12-381 one can fit 2*modulus into 32 bytes, but not 3, so we need to subtract at most twice
+    // to get completely canonical representation sooner or later
     assert_eq!(input.len(), 32 * ELEMENTS_PER_4844_BLOCK);
     let mut poly = Vec::with_capacity(ELEMENTS_PER_4844_BLOCK);
     use boojum::pairing::ff::PrimeFieldRepr;
+    let modulus = <Bls12_381Fr as boojum::pairing::ff::PrimeField>::char();
     for bytes in input.array_chunks::<32>().rev() {
         let mut repr = <Bls12_381Fr as boojum::pairing::ff::PrimeField>::Repr::default();
         repr.read_be(&bytes[..]).unwrap();
-        let as_field_element = Bls12_381Fr::from_repr(repr).unwrap();
+        let mut as_field_element = None;
+        for _ in 0..3 {
+            if let Ok(normalized_field_element) = Bls12_381Fr::from_repr(repr) {
+                as_field_element = Some(normalized_field_element);
+                break;
+            } else {
+                repr.sub_noborrow(&modulus)
+            }
+        }
+        let as_field_element = as_field_element.unwrap();
         poly.push(as_field_element);
     }
 

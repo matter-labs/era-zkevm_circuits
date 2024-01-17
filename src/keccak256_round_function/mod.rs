@@ -220,9 +220,16 @@ where
         }
     }
 
+    if crate::config::CIRCUIT_VERSOBE {
+        if let Ok(witness) = precompile_calls_queue.witness.elements.read() {
+            dbg!(witness.len());
+        }
+    }
+
     // main work cycle
     for _cycle in 0..limit {
         if crate::config::CIRCUIT_VERSOBE {
+            dbg!(_cycle);
             dbg!(state.read_precompile_call.witness_hook(cs)());
             dbg!(state.read_unaligned_words_for_round.witness_hook(cs)());
             dbg!(state.padding_round.witness_hook(cs)());
@@ -235,6 +242,10 @@ where
                 .precompile_call_params
                 .input_memory_byte_length
                 .witness_hook(cs)());
+            dbg!(precompile_calls_queue.length.witness_hook(cs)());
+            if let Ok(witness) = precompile_calls_queue.witness.elements.read() {
+                dbg!(witness.len());
+            }
         }
 
         if <CS::Config as CSConfig>::DebugConfig::PERFORM_RUNTIME_ASSERTS == true {
@@ -308,14 +319,36 @@ where
 
         // and do some work! keccak256 is expensive
         let reset_buffer = Boolean::multi_or(cs, &[state.read_precompile_call, state.completed]);
+        // if we just have read a precompile call with zero length input, we want to perform only one padding round
+        let new_request_is_input_length_zero = call_params.input_memory_byte_length.is_zero(cs);
+        let new_request_with_non_zero_length = new_request_is_input_length_zero.negated(cs);
+        let have_read_zero_length_call = Boolean::multi_and(
+            cs,
+            &[state.read_precompile_call, new_request_is_input_length_zero],
+        );
+        // otherwise we proceed with reading the input and follow the logic of padding round based on the precomputed
+        // padding round needed/not needed in the params
+        let have_read_non_zero_length_call = Boolean::multi_and(
+            cs,
+            &[state.read_precompile_call, new_request_with_non_zero_length],
+        );
+
+        state.read_precompile_call = boolean_false;
         state.read_unaligned_words_for_round = Boolean::multi_or(
             cs,
             &[
-                state.read_precompile_call,
                 state.read_unaligned_words_for_round,
+                have_read_non_zero_length_call,
             ],
         );
-        state.read_precompile_call = boolean_false;
+        state.padding_round =
+            Boolean::multi_or(cs, &[state.padding_round, have_read_zero_length_call]);
+
+        if crate::config::CIRCUIT_VERSOBE {
+            dbg!(state.read_precompile_call.witness_hook(cs)());
+            dbg!(state.read_unaligned_words_for_round.witness_hook(cs)());
+            dbg!(state.padding_round.witness_hook(cs)());
+        }
 
         // ---------------------------------
         // Now perform few memory queries to read content
