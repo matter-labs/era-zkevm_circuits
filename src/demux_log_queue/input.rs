@@ -16,6 +16,8 @@ use boojum::gadgets::{
 use cs_derive::*;
 use derivative::*;
 
+pub const NUM_OUTPUT_QUEUES: usize = 6;
+
 #[derive(Derivative, CSAllocatable, CSSelectable, CSVarLengthEncodable, WitnessHookable)]
 #[derivative(Clone, Copy, Debug)]
 #[DerivePrettyComparison("true")]
@@ -80,6 +82,19 @@ impl<F: SmallField> CSPlaceholder<F> for LogDemuxerOutputData<F> {
             sha256_access_queue_state: QueueState::<F, QUEUE_STATE_WIDTH>::placeholder(cs),
             ecrecover_access_queue_state: QueueState::<F, QUEUE_STATE_WIDTH>::placeholder(cs),
         }
+    }
+}
+
+impl<F: SmallField> LogDemuxerOutputData<F> {
+    pub fn all_output_queues_refs(&self) -> [&QueueState<F, QUEUE_STATE_WIDTH>; NUM_OUTPUT_QUEUES] {
+        [
+            &self.storage_access_queue_state,
+            &self.keccak256_access_queue_state,
+            &self.sha256_access_queue_state,
+            &self.ecrecover_access_queue_state,
+            &self.events_access_queue_state,
+            &self.l1messages_access_queue_state,
+        ]
     }
 }
 
