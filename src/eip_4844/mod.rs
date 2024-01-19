@@ -192,7 +192,7 @@ where
         let mut fe = convert_blob_chunk_to_field_element(cs, el.inner, &params);
         // horner's rule is defined as evaluating a polynomial a_0 + a_1x + a_2x^2 + ... + a_nx^n
         // in the form of a_0 + x(a_1 + x(a_2 + x(a_3 + ... + x(a_{n-1} + xa_n))))
-        // since the blob is considered to be a polynomial in lagrange form, we essentially
+        // since the blob is considered to be a polynomial in monomial form, we essentially
         // 'work backwards' and start with the highest degree coefficients first. so we can
         // add and multiply and at the last step we only add the coefficient.
         opening_value = opening_value.add(cs, &mut fe);
@@ -267,6 +267,13 @@ fn omega() -> Bls12_381Fr {
         omega.square();
     }
 
+    let mut t = omega;
+    for _ in 0..12 {
+        assert!(t != Bls12_381Fr::one());
+        t.square();
+    }
+    assert!(t == Bls12_381Fr::one());
+
     omega
 }
 
@@ -335,10 +342,12 @@ fn serial_fft(a: &mut [Bls12_381Fr], omega: &Bls12_381Fr, log_n: u32) {
 }
 
 fn fft(a: &mut [Bls12_381Fr]) {
+    assert_eq!(a.len(), ELEMENTS_PER_4844_BLOCK);
     serial_fft(a, &omega(), ELEMENTS_PER_4844_BLOCK.trailing_zeros());
 }
 
 fn ifft(a: &mut [Bls12_381Fr]) {
+    assert_eq!(a.len(), ELEMENTS_PER_4844_BLOCK);
     serial_fft(a, &omega_inv(), ELEMENTS_PER_4844_BLOCK.trailing_zeros());
     let m_inv = m_inv();
     for a in a.iter_mut() {
@@ -359,6 +368,7 @@ pub fn zksync_pubdata_into_ethereum_4844_data(input: &[u8]) -> Vec<u8> {
         el.into_repr().write_be(&mut buffer[..]).unwrap();
         result.extend(buffer);
     }
+    assert_eq!(result.len(), 32 * ELEMENTS_PER_4844_BLOCK);
 
     result
 }
@@ -372,8 +382,8 @@ pub fn zksync_pubdata_into_monomial_form_poly(input: &[u8]) -> Vec<Bls12_381Fr> 
         let mut buffer = [0u8; 32];
         buffer[..BLOB_CHUNK_SIZE].copy_from_slice(bytes);
         let mut repr = <Bls12_381Fr as boojum::pairing::ff::PrimeField>::Repr::default();
-        repr.read_le(&buffer[..]).unwrap();
-        // Since repr only has 31 bytes, repr is guaranteed to be below the modulu
+        repr.read_le(&buffer[..]).unwrap(); // note that it's LE
+                                            // Since repr only has 31 bytes, repr is guaranteed to be below the modulus
         let as_field_element = Bls12_381Fr::from_repr(repr).unwrap();
         poly.push(as_field_element);
     }
@@ -389,14 +399,14 @@ pub fn ethereum_4844_pubdata_into_bitreversed_lagrange_form_poly(input: &[u8]) -
     let mut poly = Vec::with_capacity(ELEMENTS_PER_4844_BLOCK);
     use boojum::pairing::ff::PrimeFieldRepr;
     let modulus = <Bls12_381Fr as boojum::pairing::ff::PrimeField>::char();
-    for bytes in input.array_chunks::<32>().rev() {
+    for bytes in input.array_chunks::<32>() {
         let mut repr = <Bls12_381Fr as boojum::pairing::ff::PrimeField>::Repr::default();
         repr.read_be(&bytes[..]).unwrap();
         let mut as_field_element = None;
-        for _ in 0..3 {
+        'inner: for _ in 0..3 {
             if let Ok(normalized_field_element) = Bls12_381Fr::from_repr(repr) {
                 as_field_element = Some(normalized_field_element);
-                break;
+                break 'inner;
             } else {
                 repr.sub_noborrow(&modulus)
             }
@@ -404,6 +414,7 @@ pub fn ethereum_4844_pubdata_into_bitreversed_lagrange_form_poly(input: &[u8]) -
         let as_field_element = as_field_element.unwrap();
         poly.push(as_field_element);
     }
+    assert_eq!(poly.len(), ELEMENTS_PER_4844_BLOCK);
 
     poly
 }
@@ -418,11 +429,17 @@ pub fn ethereum_4844_data_into_zksync_pubdata(input: &[u8]) -> Vec<u8> {
     // and now serialize in LE by BLOB_CHUNK_SIZE chunks
     let mut result = Vec::with_capacity(BLOB_CHUNK_SIZE * ELEMENTS_PER_4844_BLOCK);
     use boojum::pairing::ff::PrimeFieldRepr;
-    for el in poly.into_iter() {
+    // note that highest monomial goes first in byte array
+    for el in poly.into_iter().rev() {
         let mut buffer = [0u8; 32];
         el.into_repr().write_le(&mut buffer[..]).unwrap();
+        assert_eq!(
+            0, buffer[31],
+            "zksync data is representable by 31 byte field elements LE"
+        );
         result.extend_from_slice(&buffer[..BLOB_CHUNK_SIZE]);
     }
+    assert_eq!(result.len(), BLOB_CHUNK_SIZE * ELEMENTS_PER_4844_BLOCK);
 
     result
 }
@@ -696,5 +713,62 @@ mod tests {
         cs.print_gate_stats();
         let worker = Worker::new();
         assert!(cs.check_if_satisfied(&worker));
+    }
+
+    #[test]
+    fn round_trip_fft() {
+        let mut rng = rand::XorShiftRng::new_unseeded();
+        for _ in 0..128 {
+            let mut input: Vec<_> = (0..4096).map(|_| Bls12_381Fr::rand(&mut rng)).collect();
+            let expected = input.clone();
+            ifft(&mut input);
+            fft(&mut input);
+            for (i, (a, b)) in input.iter().zip(expected.iter()).enumerate() {
+                if a != b {
+                    panic!("Diverged at i = {}, a = {:?}, b = {:?}", i, a, b);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn test_data_roundtrip() {
+        let mut rng = rand::XorShiftRng::new_unseeded();
+        let zksync_data: Vec<u8> = (0..(31 * 4096)).map(|_| rng.gen()).collect();
+        let monomial_form = zksync_pubdata_into_monomial_form_poly(&zksync_data);
+        let mut expected_lagrange_form = monomial_form.clone();
+        fft(&mut expected_lagrange_form);
+        bitreverse(&mut expected_lagrange_form);
+
+        let ethereum_data = zksync_pubdata_into_ethereum_4844_data(&zksync_data);
+        let recreated_lagrange_form =
+            ethereum_4844_pubdata_into_bitreversed_lagrange_form_poly(&ethereum_data);
+        for (i, (a, b)) in expected_lagrange_form
+            .iter()
+            .zip(recreated_lagrange_form.iter())
+            .enumerate()
+        {
+            if a != b {
+                panic!("Diverged at i = {}, a = {:?}, b = {:?}", i, a, b);
+            }
+        }
+        let mut recreated_monomial_form = recreated_lagrange_form.clone();
+        bitreverse(&mut recreated_monomial_form);
+        ifft(&mut recreated_monomial_form);
+        for (i, (a, b)) in monomial_form
+            .iter()
+            .zip(recreated_monomial_form.iter())
+            .enumerate()
+        {
+            if a != b {
+                panic!("Diverged at i = {}, a = {:?}, b = {:?}", i, a, b);
+            }
+        }
+        let data_back = ethereum_4844_data_into_zksync_pubdata(&ethereum_data);
+        for (i, (a, b)) in zksync_data.iter().zip(data_back.iter()).enumerate() {
+            if a != b {
+                panic!("Diverged at i = {}, a = {:?}, b = {:?}", i, a, b);
+            }
+        }
     }
 }
