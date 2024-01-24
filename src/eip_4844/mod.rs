@@ -298,7 +298,7 @@ fn bitreverse_idx(mut n: u32, l: u32) -> u32 {
     r
 }
 
-fn bitreverse<T>(a: &mut [T]) {
+pub fn bitreverse<T>(a: &mut [T]) {
     let n = a.len() as u32;
     assert!(n.is_power_of_two());
     let log_n = n.trailing_zeros();
@@ -341,7 +341,7 @@ fn serial_fft(a: &mut [Bls12_381Fr], omega: &Bls12_381Fr, log_n: u32) {
     }
 }
 
-fn fft(a: &mut [Bls12_381Fr]) {
+pub fn fft(a: &mut [Bls12_381Fr]) {
     assert_eq!(a.len(), ELEMENTS_PER_4844_BLOCK);
     serial_fft(a, &omega(), ELEMENTS_PER_4844_BLOCK.trailing_zeros());
 }
