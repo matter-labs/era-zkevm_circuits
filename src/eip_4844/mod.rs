@@ -346,7 +346,7 @@ pub fn fft(a: &mut [Bls12_381Fr]) {
     serial_fft(a, &omega(), ELEMENTS_PER_4844_BLOCK.trailing_zeros());
 }
 
-fn ifft(a: &mut [Bls12_381Fr]) {
+pub fn ifft(a: &mut [Bls12_381Fr]) {
     assert_eq!(a.len(), ELEMENTS_PER_4844_BLOCK);
     serial_fft(a, &omega_inv(), ELEMENTS_PER_4844_BLOCK.trailing_zeros());
     let m_inv = m_inv();
