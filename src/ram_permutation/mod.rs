@@ -494,7 +494,7 @@ mod tests {
         let builder = new_builder::<_, F>(builder_impl);
 
         let builder = configure(builder);
-        let mut owned_cs = builder.build(1<<26);
+        let mut owned_cs = builder.build(1 << 26);
 
         // add tables
         let table = create_xor8_table();
