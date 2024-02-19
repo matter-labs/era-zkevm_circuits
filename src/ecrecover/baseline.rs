@@ -675,6 +675,8 @@ where
 
 #[cfg(test)]
 mod test {
+    use std::alloc::Global;
+
     use boojum::field::goldilocks::GoldilocksField;
     use boojum::gadgets::traits::allocatable::CSAllocatable;
     use boojum::pairing::ff::{Field, PrimeField, SqrtField};
@@ -776,7 +778,6 @@ mod test {
             num_constant_columns: 8,
             max_allowed_constraint_degree: 4,
         };
-        let max_variables = 1 << 26;
         let max_trace_len = 1 << 20;
 
         fn configure<
@@ -841,15 +842,12 @@ mod test {
             builder
         }
 
-        let builder_impl = CsReferenceImplementationBuilder::<F, P, DevCSConfig>::new(
-            geometry,
-            max_variables,
-            max_trace_len,
-        );
+        let builder_impl =
+            CsReferenceImplementationBuilder::<F, P, DevCSConfig>::new(geometry, max_trace_len);
         let builder = new_builder::<_, F>(builder_impl);
 
         let builder = configure(builder);
-        let mut owned_cs = builder.build(());
+        let mut owned_cs = builder.build(1 << 26);
 
         // add tables
         let table = create_xor8_table();
@@ -929,7 +927,7 @@ mod test {
 
         cs.pad_and_shrink();
 
-        let mut cs = owned_cs.into_assembly();
+        let mut cs = owned_cs.into_assembly::<Global>();
         cs.print_gate_stats();
         let worker = Worker::new();
         assert!(cs.check_if_satisfied(&worker));

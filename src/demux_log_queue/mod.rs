@@ -459,6 +459,8 @@ pub fn check_if_bitmask_and_if_empty<F: SmallField, CS: ConstraintSystem<F>, con
 
 #[cfg(test)]
 mod tests {
+    use std::alloc::Global;
+
     use super::*;
     use boojum::algebraic_props::poseidon2_parameters::Poseidon2GoldilocksExternalMatrix;
     use boojum::cs::traits::gate::GatePlacementStrategy;
@@ -551,12 +553,12 @@ mod tests {
         use boojum::cs::cs_builder_reference::CsReferenceImplementationBuilder;
 
         let builder_impl =
-            CsReferenceImplementationBuilder::<F, P, DevCSConfig>::new(geometry, 1 << 26, 1 << 20);
+            CsReferenceImplementationBuilder::<F, P, DevCSConfig>::new(geometry, 1 << 20);
         use boojum::cs::cs_builder::new_builder;
         let builder = new_builder::<_, F>(builder_impl);
 
         let builder = configure(builder);
-        let mut owned_cs = builder.build(());
+        let mut owned_cs = builder.build(1 << 26);
 
         // add tables
         let table = create_xor8_table();
@@ -592,7 +594,7 @@ mod tests {
 
         cs.pad_and_shrink();
         let worker = Worker::new();
-        let mut owned_cs = owned_cs.into_assembly();
+        let mut owned_cs = owned_cs.into_assembly::<Global>();
         owned_cs.print_gate_stats();
         assert!(owned_cs.check_if_satisfied(&worker));
     }

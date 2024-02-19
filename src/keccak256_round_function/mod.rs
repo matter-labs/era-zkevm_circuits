@@ -839,6 +839,8 @@ pub(crate) fn keccak256_absorb_and_run_permutation<F: SmallField, CS: Constraint
 
 #[cfg(test)]
 mod test {
+    use std::alloc::Global;
+
     use boojum::algebraic_props::poseidon2_parameters::*;
     use boojum::config::DevCSConfig;
     use boojum::cs::cs_builder::*;
@@ -940,12 +942,12 @@ mod test {
         use boojum::cs::cs_builder_reference::CsReferenceImplementationBuilder;
 
         let builder_impl =
-            CsReferenceImplementationBuilder::<F, P, DevCSConfig>::new(geometry, 1 << 26, 1 << 20);
+            CsReferenceImplementationBuilder::<F, P, DevCSConfig>::new(geometry, 1 << 20);
         use boojum::cs::cs_builder::new_builder;
         let builder = new_builder::<_, F>(builder_impl);
 
         let builder = configure(builder);
-        let mut owned_cs = builder.build(());
+        let mut owned_cs = builder.build(1 << 26);
 
         // add tables for keccak
         let table = create_xor8_table();
@@ -1085,7 +1087,7 @@ mod test {
         assert_eq!(buffer, reference);
 
         let _ = owned_cs.pad_and_shrink();
-        let mut assembly = owned_cs.into_assembly();
+        let mut assembly = owned_cs.into_assembly::<Global>();
         let worker = Worker::new();
         let is_satisfied = assembly.check_if_satisfied(&worker);
         assert!(is_satisfied);
