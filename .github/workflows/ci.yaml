@@ -13,7 +13,7 @@ jobs:
           toolchain: nightly-2023-09-20
           rustflags: ""
       - run: cargo build --verbose --release
-      - run: cargo test --verbose --release --all
+      - run: cargo test --verbose --release --all -- --test-threads=1
 
   formatting:
     name: cargo fmt
