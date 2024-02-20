@@ -1148,6 +1148,19 @@ pub fn scheduler_function<
             let zeroes = observable_output_data.linear_hash.map(|el| el.is_zero(cs));
             let skip_verification = Boolean::multi_and(cs, &zeroes);
             let should_verify = skip_verification.negated(cs);
+            let structured_input = EIP4844InputOutput {
+                start_flag: boolean_true,
+                completion_flag: boolean_true,
+                observable_input: (),
+                observable_output: observable_output_data,
+                hidden_fsm_input: (),
+                hidden_fsm_output: (),
+            };
+
+            let closed_form_input =
+                ClosedFormInputCompactForm::from_full_form(cs, &structured_input, round_function);
+            let expected_input_commitment: [_; INPUT_OUTPUT_COMMITMENT_LENGTH] =
+                commit_variable_length_encodable_item(cs, &closed_form_input, round_function);
 
             let proof_witness = witness.eip4844_proofs.pop_front();
 
@@ -1159,7 +1172,7 @@ pub fn scheduler_function<
                 &proof_config,
             );
 
-            let (is_valid, _inputs) = verifier.verify::<H, TR, CTR, POW>(
+            let (is_valid, inputs) = verifier.verify::<H, TR, CTR, POW>(
                 cs,
                 transcript_params.clone(),
                 &proof,
@@ -1167,8 +1180,13 @@ pub fn scheduler_function<
                 &proof_config,
                 &eip4844_vk,
             );
-
             is_valid.conditionally_enforce_true(cs, should_verify);
+            assert_eq!(inputs.len(), expected_input_commitment.len());
+
+            for (a, b) in inputs.iter().zip(expected_input_commitment.iter()) {
+                Num::conditionally_enforce_equal(cs, should_verify, a, b);
+            }
+
             eip4844_linear_hashes[i] = observable_output_data.linear_hash;
             eip4844_output_commitment_hashes[i] = observable_output_data.output_hash;
         }

@@ -1380,6 +1380,8 @@ where
 
 #[cfg(test)]
 mod test {
+    use std::alloc::Global;
+
     use boojum::field::goldilocks::GoldilocksField;
     use boojum::gadgets::non_native_field::implementations::implementation_u16::FFProxyValue;
     use boojum::gadgets::traits::allocatable::CSAllocatable;
@@ -1565,15 +1567,12 @@ mod test {
             builder
         }
 
-        let builder_impl = CsReferenceImplementationBuilder::<F, P, DevCSConfig>::new(
-            geometry,
-            max_variables,
-            max_trace_len,
-        );
+        let builder_impl =
+            CsReferenceImplementationBuilder::<F, P, DevCSConfig>::new(geometry, max_trace_len);
         let builder = new_builder::<_, F>(builder_impl);
 
         let builder = configure(builder);
-        let mut owned_cs = builder.build(());
+        let mut owned_cs = builder.build(max_variables);
 
         // add tables
         let table = create_xor8_table();
@@ -1768,7 +1767,7 @@ mod test {
 
         cs.pad_and_shrink();
 
-        let mut cs = owned_cs.into_assembly();
+        let mut cs = owned_cs.into_assembly::<Global>();
         cs.print_gate_stats();
         let worker = Worker::new();
         assert!(cs.check_if_satisfied(&worker));
@@ -1844,7 +1843,7 @@ mod test {
 
         cs.pad_and_shrink();
 
-        let mut cs = owned_cs.into_assembly();
+        let mut cs = owned_cs.into_assembly::<Global>();
         cs.print_gate_stats();
         let worker = Worker::new();
         assert!(cs.check_if_satisfied(&worker));
@@ -1920,7 +1919,7 @@ mod test {
 
         cs.pad_and_shrink();
 
-        let mut cs = owned_cs.into_assembly();
+        let mut cs = owned_cs.into_assembly::<Global>();
         cs.print_gate_stats();
         let worker = Worker::new();
         assert!(cs.check_if_satisfied(&worker));
@@ -2110,7 +2109,7 @@ mod test {
 
         cs.pad_and_shrink();
 
-        let mut cs = owned_cs.into_assembly();
+        let mut cs = owned_cs.into_assembly::<Global>();
         cs.print_gate_stats();
         let worker = Worker::new();
         assert!(cs.check_if_satisfied(&worker));
