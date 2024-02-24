@@ -1236,7 +1236,28 @@ pub fn scheduler_function<
         block_content_header.witness_hook(cs)()
     );
 
-    let (this_block_content_hash, _) = block_content_header.clone().into_formal_block_hash(cs);
+    let (this_block_content_hash, (a, b, c)) =
+        block_content_header.clone().into_formal_block_hash(cs);
+
+    println!(
+        "data {:?} {:?} {:?}",
+        a[0].witness_hook(cs)(),
+        a[1].witness_hook(cs)(),
+        a[2].witness_hook(cs)()
+    );
+    println!(
+        "meta {:?} {:?} {:?}",
+        b[0].witness_hook(cs)(),
+        b[1].witness_hook(cs)(),
+        b[2].witness_hook(cs)()
+    );
+
+    println!(
+        "aux {:?} {:?} {:?}",
+        c[0].witness_hook(cs)(),
+        c[1].witness_hook(cs)(),
+        c[2].witness_hook(cs)()
+    );
 
     // we are done with this block, process the previous one
     let previous_block_passthrough_data = prev_block_data.into_flattened_bytes(cs);
