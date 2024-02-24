@@ -136,6 +136,7 @@ pub fn scheduler_function<
     [(); <MemoryQuery<F> as CSAllocatableExt<F>>::INTERNAL_STRUCT_LEN]:,
     [(); <DecommitQuery<F> as CSAllocatableExt<F>>::INTERNAL_STRUCT_LEN]:,
 {
+    println!("XXXX Starting scheduler function");
     let prev_block_data = BlockPassthroughData::allocate(cs, witness.prev_block_data.clone());
     let block_meta_parameters =
         BlockMetaParameters::allocate(cs, witness.block_meta_parameters.clone());
@@ -1199,6 +1200,19 @@ pub fn scheduler_function<
         )
     };
 
+    println!(
+        "blob1 - linear: {:?} {:?} {:?}",
+        eip4844_linear_hashes[0][0].witness_hook(cs)(),
+        eip4844_linear_hashes[0][1].witness_hook(cs)(),
+        eip4844_linear_hashes[0][2].witness_hook(cs)()
+    );
+    println!(
+        "blob2 - linear: {:?} {:?} {:?}",
+        eip4844_linear_hashes[1][0].witness_hook(cs)(),
+        eip4844_linear_hashes[1][1].witness_hook(cs)(),
+        eip4844_linear_hashes[1][2].witness_hook(cs)()
+    );
+
     let aux_data = BlockAuxilaryOutput {
         rollup_state_diff_for_compression: storage_application_observable_output
             .state_diffs_keccak256_hash,
@@ -1209,11 +1223,18 @@ pub fn scheduler_function<
         eip4844_output_commitment_hashes: eip4844_output_commitment_hashes,
     };
 
+    println!("Full aux {:?}", aux_data.witness_hook(cs)());
+
     let block_content_header = BlockContentHeader {
         block_data: this_block_data,
         block_meta: block_meta_parameters,
         auxilary_output: aux_data,
     };
+
+    println!(
+        "block content header {:?}",
+        block_content_header.witness_hook(cs)()
+    );
 
     let (this_block_content_hash, _) = block_content_header.clone().into_formal_block_hash(cs);
 
@@ -1230,6 +1251,20 @@ pub fn scheduler_function<
         previous_block_passthrough_hash,
         previous_block_meta_hash,
         previous_block_aux_hash,
+    );
+
+    println!(
+        "prev block hash: {:?} {:?} {:?}",
+        previous_block_content_hash[0].witness_hook(cs)(),
+        previous_block_content_hash[1].witness_hook(cs)(),
+        previous_block_content_hash[2].witness_hook(cs)()
+    );
+
+    println!(
+        "this block hash: {:?} {:?} {:?}",
+        this_block_content_hash[0].witness_hook(cs)(),
+        this_block_content_hash[1].witness_hook(cs)(),
+        this_block_content_hash[2].witness_hook(cs)()
     );
 
     // form full block hash
@@ -1259,10 +1294,32 @@ pub fn scheduler_function<
         dst.reverse();
     }
 
+    println!(
+        "recursionh: {:?} {:?} {:?}",
+        recursion_node_verification_key_hash[0].witness_hook(cs)(),
+        recursion_node_verification_key_hash[1].witness_hook(cs)(),
+        recursion_node_verification_key_hash[2].witness_hook(cs)()
+    );
+
+    println!(
+        "leaf: {:?} {:?} {:?}",
+        leaf_layer_parameters_hash[0].witness_hook(cs)(),
+        leaf_layer_parameters_hash[1].witness_hook(cs)(),
+        leaf_layer_parameters_hash[2].witness_hook(cs)()
+    );
+
     flattened_public_input.extend(recursion_node_verification_key_hash);
     flattened_public_input.extend(leaf_layer_parameters_hash);
 
     let input_keccak_hash = keccak256::keccak256(cs, &flattened_public_input);
+
+    println!(
+        "Input keccak: {:?} {:?} {:?}",
+        input_keccak_hash[0].witness_hook(cs)(),
+        input_keccak_hash[1].witness_hook(cs)(),
+        input_keccak_hash[2].witness_hook(cs)()
+    );
+
     let take_by = F::CAPACITY_BITS / 8;
 
     for chunk in input_keccak_hash
