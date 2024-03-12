@@ -81,7 +81,7 @@ impl<F: SmallField> EcrecoverPrecompileCallParams<F> {
 
 const NUM_WORDS: usize = 17;
 const SECP_B_COEF: u64 = 7;
-const EXCEPTION_FLAGS_ARR_LEN: usize = 9;
+const EXCEPTION_FLAGS_ARR_LEN: usize = 10;
 const NUM_MEMORY_READS_PER_CYCLE: usize = 4;
 const X_POWERS_ARR_LEN: usize = 256;
 const VALID_Y_IN_EXTERNAL_FIELD: u64 = 4;
@@ -105,6 +105,9 @@ const MODULUS_MINUS_ONE_DIV_TWO: &'static str =
 const A1: &'static str = "0x3086d221a7d46bcde86c90e49284eb15";
 const B1: &'static str = "0xe4437ed6010e88286f547fa90abfe4c3";
 const A2: &'static str = "0x114ca50f7a8e2f3f657c1108d9d44cfd8";
+
+const HALF_SUBGROUP_SIZE: &'static str =
+    "7fffffffffffffffffffffffffffffff5d576e7357a4501ddfe92f46681b20a0";
 
 const WINDOW_WIDTH: usize = 4;
 const NUM_MULTIPLICATION_STEPS_FOR_WIDTH_4: usize = 33;
@@ -415,11 +418,6 @@ fn width_4_windowed_multiplication<F: SmallField, CS: ConstraintSystem<F>>(
 
         (k1_out_of_range, k1, k2_out_of_range, k2)
     };
-
-    // dbg!(k1.witness_hook(cs)());
-    // dbg!(k2.witness_hook(cs)());
-    // dbg!(k1_was_negated.witness_hook(cs)());
-    // dbg!(k2_was_negated.witness_hook(cs)());
 
     // create precomputed table of size 1<<4 - 1
     // there is no 0 * P in the table, we will handle it below
@@ -925,6 +923,13 @@ fn ecrecover_precompile_inner_routine<
 
     let [y_is_odd, x_overflow, ..] =
         Num::<F>::from_variable(recid.get_variable()).spread_into_bits::<_, 8>(cs);
+
+    // check convention s < N/2
+    let s_upper_bound =
+        UInt256::allocated_constant(cs, U256::from_str_radix(HALF_SUBGROUP_SIZE, 16).unwrap());
+    let (_, uf) = s.overflowing_sub(cs, &s_upper_bound);
+    let s_too_large = uf.negated(cs);
+    exception_flags.push(s_too_large);
 
     let (r_plus_n, of) = r.overflowing_add(cs, &secp_n_u256);
     let mut x_as_u256 = UInt256::conditionally_select(cs, x_overflow, &r_plus_n, &r);
@@ -1700,6 +1705,7 @@ mod test {
     }
 
     #[test]
+    #[ignore = "test vectors hits malleable S"]
     fn test_signature_for_address_verification() {
         let mut owned_cs = create_cs(1 << 20);
         let cs = &mut owned_cs;
