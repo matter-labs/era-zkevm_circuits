@@ -11,11 +11,13 @@ use boojum::gadgets::num::Num;
 use boojum::gadgets::{boolean::Boolean, u16::UInt16, u32::UInt32};
 
 use crate::main_vm::opcodes::{AddSubRelation, MulDivRelation};
+use zkevm_opcode_defs::REGISTERS_COUNT;
 
-pub(crate) const MAX_SPONGES_PER_CYCLE: usize = 8;
+pub(crate) const MAX_SPONGES_PER_CYCLE: usize = 9;
 pub(crate) const MAX_U32_CONDITIONAL_RANGE_CHECKS_PER_CYCLE: usize = 8;
 pub(crate) const MAX_ADD_SUB_RELATIONS_PER_CYCLE: usize = 1;
-pub(crate) const MAX_MUL_DIV_RELATIONS_PER_CYCLE: usize = 3;
+pub(crate) const MAX_MUL_DIV_RELATIONS_PER_CYCLE: usize = 1;
+pub(crate) const MAX_DECOMMIT_QUEUE_CANDIDATES: usize = 2;
 
 #[derive(Derivative)]
 #[derivative(Default(bound = ""))]
@@ -41,7 +43,8 @@ pub struct StateDiffsAccumulator<F: SmallField> {
     pub new_pc_candidates: Vec<(Boolean<F>, UInt16<F>)>,
     // other meta parameters of VM
     pub new_tx_number: Option<(Boolean<F>, UInt32<F>)>,
-    pub new_ergs_per_pubdata: Option<(Boolean<F>, UInt32<F>)>,
+    // pubdata revert counter for state
+    pub new_pubdata_revert_counter: Option<(Boolean<F>, UInt32<F>)>,
     // memory bouds
     pub new_heap_bounds: Vec<(Boolean<F>, UInt32<F>)>,
     pub new_aux_heap_bounds: Vec<(Boolean<F>, UInt32<F>)>,
@@ -52,11 +55,14 @@ pub struct StateDiffsAccumulator<F: SmallField> {
     // memory page counter
     pub memory_page_counters: Option<UInt32<F>>,
     // decommittment queue
-    pub decommitment_queue_candidates: Option<(
-        Boolean<F>,
-        UInt32<F>,
-        [Num<F>; FULL_SPONGE_QUEUE_STATE_WIDTH],
-    )>,
+    pub decommitment_queue_candidates: ArrayVec<
+        (
+            Boolean<F>,
+            UInt32<F>,
+            [Num<F>; FULL_SPONGE_QUEUE_STATE_WIDTH],
+        ),
+        MAX_DECOMMIT_QUEUE_CANDIDATES,
+    >,
     // memory queue
     pub memory_queue_candidates: Vec<(
         Boolean<F>,
@@ -96,4 +102,6 @@ pub struct StateDiffsAccumulator<F: SmallField> {
         Boolean<F>,
         ArrayVec<MulDivRelation<F>, MAX_MUL_DIV_RELATIONS_PER_CYCLE>,
     )>,
+    // pubdata cost of case if we do not modify callstack entry in full
+    pub pubdata_cost: Option<(Boolean<F>, UInt32<F>)>, // signed in practice
 }

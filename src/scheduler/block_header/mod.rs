@@ -20,7 +20,7 @@ use boojum::serde_utils::BigArraySerde;
 use boojum::gadgets::keccak256;
 
 pub const NUM_SHARDS: usize = 2;
-pub const MAX_4844_BLOBS_PER_BLOCK: usize = 2;
+pub const MAX_4844_BLOBS_PER_BLOCK: usize = 16;
 
 // Data that represents a pure state
 #[derive(Derivative, CSAllocatable, CSSelectable, CSVarLengthEncodable, WitnessHookable)]
@@ -44,6 +44,7 @@ pub struct BlockMetaParameters<F: SmallField> {
     pub zkporter_is_available: Boolean<F>,
     pub bootloader_code_hash: UInt256<F>,
     pub default_aa_code_hash: UInt256<F>,
+    pub evm_simulator_code_hash: UInt256<F>,
 }
 
 // This is the information that represents artifacts only meaningful for this block, that will not be used for any

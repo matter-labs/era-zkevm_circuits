@@ -1,3 +1,5 @@
+use std::collections::{HashMap, HashSet};
+
 use super::*;
 
 pub mod input;
@@ -7,10 +9,11 @@ use crate::base_structures::{
     vm_state::*,
 };
 use crate::fsm_input_output::ClosedFormInputCompactForm;
+use arrayvec::ArrayVec;
 use boojum::algebraic_props::round_function::AlgebraicRoundFunction;
 use boojum::cs::{gates::*, traits::cs::ConstraintSystem};
 use boojum::field::SmallField;
-use boojum::gadgets::queue::queue_optimizer::SpongeOptimizer;
+
 use boojum::gadgets::traits::round_function::CircuitRoundFunction;
 use boojum::gadgets::u32::UInt32;
 use boojum::gadgets::u8::UInt8;
@@ -34,6 +37,71 @@ use crate::{
 pub type StorageLogQueue<F, R> = CircuitQueue<F, LogQuery<F>, 8, 12, 4, 4, 20, R>;
 pub type StorageLogQueueWitness<F> =
     CircuitQueueWitness<F, LogQuery<F>, QUEUE_STATE_WIDTH, LOG_QUERY_PACKED_WIDTH>;
+
+#[repr(usize)]
+#[derive(Clone, Copy, Debug, Hash, PartialEq, Eq)]
+pub enum DemuxOutput {
+    RollupStorage = 0,
+    PorterStorage,
+    Events,
+    L2ToL1Messages,
+    Keccak,
+    Sha256,
+    ECRecover,
+    Secp256r1Verify,
+    TransientStorage,
+}
+
+pub const NUM_DEMUX_OUTPUTS: usize = DemuxOutput::TransientStorage as usize + 1;
+
+pub const ALL_DEMUX_OUTPUTS: [DemuxOutput; NUM_DEMUX_OUTPUTS] = [
+    DemuxOutput::RollupStorage,
+    DemuxOutput::PorterStorage,
+    DemuxOutput::Events,
+    DemuxOutput::L2ToL1Messages,
+    DemuxOutput::Keccak,
+    DemuxOutput::Sha256,
+    DemuxOutput::ECRecover,
+    DemuxOutput::Secp256r1Verify,
+    DemuxOutput::TransientStorage,
+];
+
+impl DemuxOutput {
+    pub fn is_implemented(&self) -> bool {
+        match self {
+            Self::PorterStorage => false,
+            _ => true,
+        }
+    }
+
+    pub fn aux_byte(&self) -> u8 {
+        match self {
+            Self::RollupStorage | Self::PorterStorage => STORAGE_AUX_BYTE,
+            Self::Events => EVENT_AUX_BYTE,
+            Self::L2ToL1Messages => L1_MESSAGE_AUX_BYTE,
+            Self::TransientStorage => TRANSIENT_STORAGE_AUX_BYTE,
+            _ => PRECOMPILE_AUX_BYTE,
+        }
+    }
+
+    pub fn precompile_address(&self) -> Option<zkevm_opcode_defs::ethereum_types::H160> {
+        match self {
+            Self::Keccak => Some(*zkevm_opcode_defs::system_params::KECCAK256_ROUND_FUNCTION_PRECOMPILE_FORMAL_ADDRESS),
+            Self::Sha256 => Some(*zkevm_opcode_defs::system_params::SHA256_ROUND_FUNCTION_PRECOMPILE_FORMAL_ADDRESS),
+            Self::ECRecover => Some(*zkevm_opcode_defs::system_params::ECRECOVER_INNER_FUNCTION_PRECOMPILE_FORMAL_ADDRESS),
+            Self::Secp256r1Verify => Some(*zkevm_opcode_defs::system_params::SECP256R1_VERIFY_INNER_FUNCTION_PRECOMPILE_FORMAL_ADDRESS),
+            _ => None,
+        }
+    }
+
+    pub fn shard_id(&self) -> Option<u8> {
+        match self {
+            Self::RollupStorage => Some(0u8),
+            Self::PorterStorage => Some(1u8),
+            _ => None,
+        }
+    }
+}
 
 pub fn demultiplex_storage_logs_enty_point<
     F: SmallField,
@@ -74,43 +142,16 @@ where
     initial_queue.witness = Arc::new(initial_queue_witness);
 
     // for the rest it's just select between empty or from FSM
-    let queue_states_from_fsm = [
-        &structured_input.hidden_fsm_input.storage_access_queue_state,
-        &structured_input.hidden_fsm_input.events_access_queue_state,
-        &structured_input
-            .hidden_fsm_input
-            .l1messages_access_queue_state,
-        &structured_input
-            .hidden_fsm_input
-            .keccak256_access_queue_state,
-        &structured_input.hidden_fsm_input.sha256_access_queue_state,
-        &structured_input
-            .hidden_fsm_input
-            .ecrecover_access_queue_state,
-    ];
+    let queue_states_from_fsm = &structured_input.hidden_fsm_input.output_queue_states;
 
     let empty_state = QueueState::empty(cs);
-    let [mut storage_access_queue, mut events_access_queue, mut l1messages_access_queue, mut keccak256_access_queue, mut sha256_access_queue, mut ecrecover_access_queue] =
-        queue_states_from_fsm.map(|el| {
-            let state = QueueState::conditionally_select(
-                cs,
-                structured_input.start_flag,
-                &empty_state,
-                &el,
-            );
-            StorageLogQueue::<F, R>::from_state(cs, state)
-        });
+    let mut queue_states = queue_states_from_fsm.map(|el| {
+        let state =
+            QueueState::conditionally_select(cs, structured_input.start_flag, &empty_state, &el);
+        StorageLogQueue::<F, R>::from_state(cs, state)
+    });
 
-    let input_queues = [
-        &mut storage_access_queue,
-        &mut events_access_queue,
-        &mut l1messages_access_queue,
-        &mut keccak256_access_queue,
-        &mut sha256_access_queue,
-        &mut ecrecover_access_queue,
-    ];
-
-    demultiplex_storage_logs_inner(cs, &mut initial_queue, input_queues, limit);
+    demultiplex_storage_logs_inner(cs, &mut initial_queue, &mut queue_states, limit);
 
     use boojum::gadgets::traits::allocatable::CSPlaceholder;
     // form the final state
@@ -121,87 +162,28 @@ where
 
     structured_input.hidden_fsm_output.initial_log_queue_state = initial_queue.into_state();
 
-    structured_input
-        .hidden_fsm_output
-        .storage_access_queue_state = storage_access_queue.into_state();
+    structured_input.hidden_fsm_output.output_queue_states = queue_states.map(|el| el.into_state());
 
-    structured_input.hidden_fsm_output.events_access_queue_state = events_access_queue.into_state();
-
-    structured_input
-        .hidden_fsm_output
-        .l1messages_access_queue_state = l1messages_access_queue.into_state();
-
-    structured_input
-        .hidden_fsm_output
-        .keccak256_access_queue_state = keccak256_access_queue.into_state();
-
-    structured_input.hidden_fsm_output.sha256_access_queue_state = sha256_access_queue.into_state();
-
-    structured_input
-        .hidden_fsm_output
-        .ecrecover_access_queue_state = ecrecover_access_queue.into_state();
+    let porter_storage_queue =
+        structured_input.hidden_fsm_output.output_queue_states[DemuxOutput::PorterStorage as usize];
+    let porter_storage_queue_is_empty = porter_storage_queue.tail.length.is_zero(cs);
+    let boolean_true = Boolean::allocated_constant(cs, true);
+    Boolean::enforce_equal(cs, &porter_storage_queue_is_empty, &boolean_true);
 
     // copy into observable output
-    structured_input
+    for (dst, src) in structured_input
         .observable_output
-        .storage_access_queue_state = QueueState::conditionally_select(
-        cs,
-        completed,
-        &structured_input
-            .hidden_fsm_output
-            .storage_access_queue_state,
-        &structured_input
-            .observable_output
-            .storage_access_queue_state,
-    );
-    structured_input.observable_output.events_access_queue_state = QueueState::conditionally_select(
-        cs,
-        completed,
-        &structured_input.hidden_fsm_output.events_access_queue_state,
-        &structured_input.observable_output.events_access_queue_state,
-    );
-    structured_input
-        .observable_output
-        .l1messages_access_queue_state = QueueState::conditionally_select(
-        cs,
-        completed,
-        &structured_input
-            .hidden_fsm_output
-            .l1messages_access_queue_state,
-        &structured_input
-            .observable_output
-            .l1messages_access_queue_state,
-    );
-    structured_input
-        .observable_output
-        .keccak256_access_queue_state = QueueState::conditionally_select(
-        cs,
-        completed,
-        &structured_input
-            .hidden_fsm_output
-            .keccak256_access_queue_state,
-        &structured_input
-            .observable_output
-            .keccak256_access_queue_state,
-    );
-    structured_input.observable_output.sha256_access_queue_state = QueueState::conditionally_select(
-        cs,
-        completed,
-        &structured_input.hidden_fsm_output.sha256_access_queue_state,
-        &structured_input.observable_output.sha256_access_queue_state,
-    );
-    structured_input
-        .observable_output
-        .ecrecover_access_queue_state = QueueState::conditionally_select(
-        cs,
-        completed,
-        &structured_input
-            .hidden_fsm_output
-            .ecrecover_access_queue_state,
-        &structured_input
-            .observable_output
-            .ecrecover_access_queue_state,
-    );
+        .output_queue_states
+        .iter_mut()
+        .zip(
+            structured_input
+                .hidden_fsm_output
+                .output_queue_states
+                .iter(),
+        )
+    {
+        *dst = QueueState::conditionally_select(cs, completed, src, &*dst);
+    }
 
     // self-check
     structured_input.hook_compare_witness(cs, &closed_form_input);
@@ -218,19 +200,6 @@ where
     input_commitment
 }
 
-pub const NUM_SEPARATE_QUEUES: usize = 6;
-
-#[repr(u64)]
-pub enum LogType {
-    RollupStorage = 0,
-    Events = 1,
-    L1Messages = 2,
-    KeccakCalls = 3,
-    Sha256Calls = 4,
-    ECRecoverCalls = 5,
-    PorterStorage = 1024, // force unreachable
-}
-
 pub fn demultiplex_storage_logs_inner<
     F: SmallField,
     CS: ConstraintSystem<F>,
@@ -238,158 +207,110 @@ pub fn demultiplex_storage_logs_inner<
 >(
     cs: &mut CS,
     storage_log_queue: &mut StorageLogQueue<F, R>,
-    output_queues: [&mut StorageLogQueue<F, R>; NUM_SEPARATE_QUEUES],
+    output_queues: &mut [StorageLogQueue<F, R>; NUM_DEMUX_OUTPUTS],
     limit: usize,
 ) where
     [(); <LogQuery<F> as CSAllocatableExt<F>>::INTERNAL_STRUCT_LEN]:,
 {
     assert!(limit <= u32::MAX as usize);
 
-    let [rollup_storage_queue, events_queue, l1_messages_queue, keccak_calls_queue, sha256_calls_queue, ecdsa_calls_queue] =
-        output_queues;
+    let boolean_false = Boolean::allocated_constant(cs, false);
 
-    let keccak_precompile_address = UInt160::allocated_constant(
-        cs,
-        *zkevm_opcode_defs::system_params::KECCAK256_ROUND_FUNCTION_PRECOMPILE_FORMAL_ADDRESS,
-    );
-    let sha256_precompile_address = UInt160::allocated_constant(
-        cs,
-        *zkevm_opcode_defs::system_params::SHA256_ROUND_FUNCTION_PRECOMPILE_FORMAL_ADDRESS,
-    );
-    let ecrecover_precompile_address = UInt160::allocated_constant(
-        cs,
-        *zkevm_opcode_defs::system_params::ECRECOVER_INNER_FUNCTION_PRECOMPILE_FORMAL_ADDRESS,
-    );
+    let mut all_different_aux_bytes = vec![];
+    let mut add_different_addresses = vec![];
+    let mut all_different_shard_ids = vec![];
 
-    // we have 6 queues to demux into, and up to 3 sponges per any push
-    // use crate::base_structures::log_query::LOG_QUERY_ABSORBTION_ROUNDS;
-    // let mut optimizer = SpongeOptimizer::<F, R, 8, 12, 4, 6>::new(LOG_QUERY_ABSORBTION_ROUNDS * limit);
+    let mut aux_byte_set = HashSet::new();
+    let mut aux_different_addresses_set = HashSet::new();
+    let mut aux_shard_ids_set = HashSet::new();
+
+    for el in ALL_DEMUX_OUTPUTS.into_iter() {
+        let aux_byte = el.aux_byte();
+        if aux_byte_set.contains(&aux_byte) == false {
+            aux_byte_set.insert(aux_byte);
+            all_different_aux_bytes.push((aux_byte, UInt8::allocated_constant(cs, aux_byte)));
+        }
+        if let Some(address) = el.precompile_address() {
+            if aux_different_addresses_set.contains(&address) == false {
+                aux_different_addresses_set.insert(address);
+                add_different_addresses.push((address, UInt160::allocated_constant(cs, address)));
+            }
+        }
+        if let Some(shard_id) = el.shard_id() {
+            if aux_shard_ids_set.contains(&shard_id) == false {
+                aux_shard_ids_set.insert(shard_id);
+                all_different_shard_ids.push((shard_id, UInt8::allocated_constant(cs, shard_id)));
+            }
+        }
+    }
+
+    let mut aux_byte_equality_map = HashMap::new();
+    let mut address_equality_map = HashMap::new();
+    let mut shard_id_equality_map = HashMap::new();
 
     for _ in 0..limit {
-        // debug_assert!(optimizer.is_fresh());
+        assert!(aux_byte_equality_map.is_empty());
+        assert!(address_equality_map.is_empty());
+        assert!(shard_id_equality_map.is_empty());
 
         let queue_is_empty = storage_log_queue.is_empty(cs);
         let execute = queue_is_empty.negated(cs);
-        let popped = storage_log_queue.pop_front(cs, execute);
+        let (popped, _) = storage_log_queue.pop_front(cs, execute);
 
-        let [aux_byte_for_storage, aux_byte_for_event, aux_byte_for_l1_message, aux_byte_for_precompile_call] =
-            [
-                STORAGE_AUX_BYTE,
-                EVENT_AUX_BYTE,
-                L1_MESSAGE_AUX_BYTE,
-                PRECOMPILE_AUX_BYTE,
-            ]
-            .map(|byte| UInt8::allocated_constant(cs, byte));
+        // precompute all comparisons
 
-        let is_storage_aux_byte = UInt8::equals(cs, &aux_byte_for_storage, &popped.0.aux_byte);
-        let is_event_aux_byte = UInt8::equals(cs, &aux_byte_for_event, &popped.0.aux_byte);
-        let is_l1_message_aux_byte =
-            UInt8::equals(cs, &aux_byte_for_l1_message, &popped.0.aux_byte);
-        let is_precompile_aux_byte =
-            UInt8::equals(cs, &aux_byte_for_precompile_call, &popped.0.aux_byte);
+        for (constant, allocated) in all_different_aux_bytes.iter() {
+            let equal = UInt8::equals(cs, allocated, &popped.aux_byte);
+            let existing = aux_byte_equality_map.insert(*constant, equal);
+            assert!(existing.is_none());
+        }
 
-        let is_keccak_address = UInt160::equals(cs, &keccak_precompile_address, &popped.0.address);
-        let is_sha256_address = UInt160::equals(cs, &sha256_precompile_address, &popped.0.address);
-        let is_ecrecover_address =
-            UInt160::equals(cs, &ecrecover_precompile_address, &popped.0.address);
+        for (constant, allocated) in add_different_addresses.iter() {
+            let equal = UInt160::equals(cs, allocated, &popped.address);
+            let existing = address_equality_map.insert(*constant, equal);
+            assert!(existing.is_none());
+        }
 
-        let is_rollup_shard = popped.0.shard_id.is_zero(cs);
-        let execute_rollup_storage =
-            Boolean::multi_and(cs, &[is_storage_aux_byte, is_rollup_shard, execute]);
-        let is_porter_shard = is_rollup_shard.negated(cs);
-        let execute_porter_storage =
-            Boolean::multi_and(cs, &[is_storage_aux_byte, is_porter_shard, execute]);
+        for (constant, allocated) in all_different_shard_ids.iter() {
+            let equal = UInt8::equals(cs, allocated, &popped.shard_id);
+            let existing = shard_id_equality_map.insert(*constant, equal);
+            assert!(existing.is_none());
+        }
 
-        let boolean_false = Boolean::allocated_constant(cs, false);
-        Boolean::enforce_equal(cs, &execute_porter_storage, &boolean_false);
+        let mut bitmasks = [boolean_false; NUM_DEMUX_OUTPUTS];
 
-        let execute_event = Boolean::multi_and(cs, &[is_event_aux_byte, execute]);
-        let execute_l1_message = Boolean::multi_and(cs, &[is_l1_message_aux_byte, execute]);
-        let execute_keccak_call =
-            Boolean::multi_and(cs, &[is_precompile_aux_byte, is_keccak_address, execute]);
-        let execute_sha256_call =
-            Boolean::multi_and(cs, &[is_precompile_aux_byte, is_sha256_address, execute]);
-        let execute_ecrecover_call =
-            Boolean::multi_and(cs, &[is_precompile_aux_byte, is_ecrecover_address, execute]);
+        const MAX_FLAGS: usize = 4;
 
-        // rollup_storage_queue.push_encoding_with_optimizer_without_changing_witness(
-        //     cs,
-        //     popped.1,
-        //     execute_rollup_storage,
-        //     LogType::RollupStorage as usize,
-        //     &mut optimizer
-        // );
-        // events_queue.push_encoding_with_optimizer_without_changing_witness(
-        //     cs,
-        //     popped.1,
-        //     execute_event,
-        //     LogType::Events as usize,
-        //     &mut optimizer
-        // );
-        // l1_messages_queue.push_encoding_with_optimizer_without_changing_witness(
-        //     cs,
-        //     popped.1,
-        //     execute_l1_message,
-        //     LogType::L1Messages as usize,
-        //     &mut optimizer
-        // );
-        // keccak_calls_queue.push_encoding_with_optimizer_without_changing_witness(
-        //     cs,
-        //     popped.1,
-        //     execute_keccak_call,
-        //     LogType::KeccakCalls as usize,
-        //     &mut optimizer
-        // );
-        // sha256_calls_queue.push_encoding_with_optimizer_without_changing_witness(
-        //     cs,
-        //     popped.1,
-        //     execute_sha256_call,
-        //     LogType::Sha256Calls as usize,
-        //     &mut optimizer
-        // );
-        // ecdsa_calls_queue.push_encoding_with_optimizer_without_changing_witness(
-        //     cs,
-        //     popped.1,
-        //     execute_ecrecover_call,
-        //     LogType::ECRecoverCalls as usize,
-        //     &mut optimizer
-        // );
+        for el in ALL_DEMUX_OUTPUTS.into_iter() {
+            let mut flags = ArrayVec::<Boolean<F>, MAX_FLAGS>::new();
+            flags.push(execute);
 
-        let bitmask = [
-            execute_rollup_storage,
-            execute_event,
-            execute_l1_message,
-            execute_keccak_call,
-            execute_sha256_call,
-            execute_ecrecover_call,
-        ];
+            let aux_byte = el.aux_byte();
+            flags.push(aux_byte_equality_map[&aux_byte]);
 
-        push_with_optimize(
-            cs,
-            [
-                rollup_storage_queue,
-                events_queue,
-                l1_messages_queue,
-                keccak_calls_queue,
-                sha256_calls_queue,
-                ecdsa_calls_queue,
-            ],
-            bitmask,
-            popped.0,
-        );
+            if let Some(address) = el.precompile_address() {
+                flags.push(address_equality_map[&address]);
+            }
 
-        let expected_bitmask_bits = [
-            is_storage_aux_byte,
-            is_event_aux_byte,
-            is_l1_message_aux_byte,
-            is_precompile_aux_byte,
-        ];
+            if let Some(shard_id) = el.shard_id() {
+                flags.push(shard_id_equality_map[&shard_id]);
+            }
 
-        let is_bitmask = check_if_bitmask_and_if_empty(cs, expected_bitmask_bits);
+            bitmasks[el as usize] = Boolean::multi_and(cs, &flags[..]);
+        }
+
+        push_with_optimize(cs, output_queues, bitmasks, popped);
+
+        // if crate::config::CIRCUIT_VERSOBE {
+        //     dbg!(bitmasks.witness_hook(cs)().unwrap());
+        // }
+
+        let is_bitmask = check_if_bitmask_or_if_empty(cs, bitmasks);
         is_bitmask.conditionally_enforce_true(cs, execute);
 
-        // // we enforce optimizer in this round, and it clears it up
-        // optimizer.enforce(cs);
+        aux_byte_equality_map.clear();
+        address_equality_map.clear();
+        shard_id_equality_map.clear();
     }
 
     storage_log_queue.enforce_consistency(cs);
@@ -402,29 +323,25 @@ pub fn push_with_optimize<
     F: SmallField,
     CS: ConstraintSystem<F>,
     EL: CircuitEncodableExt<F, N>,
-    const AW: usize,
-    const SW: usize,
-    const CW: usize,
-    const T: usize,
     const N: usize,
-    R: CircuitRoundFunction<F, AW, SW, CW>,
-    const NUM_QUEUE: usize,
+    R: CircuitRoundFunction<F, 8, 12, 4> + AlgebraicRoundFunction<F, 8, 12, 4>,
+    const NUM_QUEUES: usize,
 >(
     cs: &mut CS,
-    mut queues: [&mut CircuitQueue<F, EL, AW, SW, CW, T, N, R>; NUM_QUEUE],
-    bitmask: [Boolean<F>; NUM_QUEUE],
-    value_encoding: EL,
+    output_queues: &mut [StorageLogQueue<F, R>; NUM_QUEUES],
+    bitmask: [Boolean<F>; NUM_QUEUES],
+    value_for_encoding: EL,
 ) where
     [(); <EL as CSAllocatableExt<F>>::INTERNAL_STRUCT_LEN]:,
 {
-    let mut states = queues.iter().map(|x| x.into_state());
+    let mut states = output_queues.iter().map(|x| x.into_state());
     let mut state = states.next().unwrap();
 
     for (bit, next_state) in bitmask.iter().skip(1).zip(states) {
         state = QueueState::conditionally_select(cs, *bit, &next_state, &state);
     }
 
-    let mut exec_queue = CircuitQueue::<F, EL, AW, SW, CW, T, N, R>::from_raw_parts(
+    let mut exec_queue = CircuitQueue::<F, EL, 8, 12, 4, 4, N, R>::from_raw_parts(
         cs,
         state.head,
         state.tail.tail,
@@ -432,18 +349,16 @@ pub fn push_with_optimize<
     );
 
     let boolean_true = Boolean::allocated_constant(cs, true);
+    exec_queue.push(cs, value_for_encoding, boolean_true);
 
-    exec_queue.push(cs, value_encoding, boolean_true);
-
-    for (bit, queue) in bitmask.into_iter().zip(queues.iter_mut()) {
+    for (bit, queue) in bitmask.into_iter().zip(output_queues.iter_mut()) {
         // We don't need to update head
-        // queue.head = <[Num<F>; T]>::conditionally_select(cs, bit, &exec_queue.head, &queue.head);
-        queue.tail = <[Num<F>; T]>::conditionally_select(cs, bit, &exec_queue.tail, &queue.tail);
+        queue.tail = <[Num<F>; 4]>::conditionally_select(cs, bit, &exec_queue.tail, &queue.tail);
         queue.length = UInt32::conditionally_select(cs, bit, &exec_queue.length, &queue.length);
     }
 }
 
-pub fn check_if_bitmask_and_if_empty<F: SmallField, CS: ConstraintSystem<F>, const N: usize>(
+pub fn check_if_bitmask_or_if_empty<F: SmallField, CS: ConstraintSystem<F>, const N: usize>(
     cs: &mut CS,
     mask: [Boolean<F>; N],
 ) -> Boolean<F> {
@@ -452,15 +367,15 @@ pub fn check_if_bitmask_and_if_empty<F: SmallField, CS: ConstraintSystem<F>, con
     let lc = Num::linear_combination(cs, &lc);
 
     let one = Num::from_variable(cs.allocate_constant(F::ONE));
-    let is_boolean = Num::equals(cs, &lc, &one);
+    let is_one = Num::equals(cs, &lc, &one);
+    let is_zero = lc.is_zero(cs);
+    let is_boolean = Boolean::multi_or(cs, &[is_zero, is_one]);
 
     is_boolean
 }
 
 #[cfg(test)]
 mod tests {
-    use std::alloc::Global;
-
     use super::*;
     use boojum::algebraic_props::poseidon2_parameters::Poseidon2GoldilocksExternalMatrix;
     use boojum::cs::traits::gate::GatePlacementStrategy;
@@ -574,27 +489,14 @@ mod tests {
         for el in unsorted_input {
             storage_log_queue.push(cs, el, execute);
         }
-        let mut output_queue = StorageLogQueue::empty(cs);
-        let mut output_queue1 = StorageLogQueue::empty(cs);
-        let mut output_queue2 = StorageLogQueue::empty(cs);
-        let mut output_queue3 = StorageLogQueue::empty(cs);
-        let mut output_queue4 = StorageLogQueue::empty(cs);
-        let mut output_queue5 = StorageLogQueue::empty(cs);
 
-        let output = [
-            &mut output_queue,
-            &mut output_queue1,
-            &mut output_queue2,
-            &mut output_queue3,
-            &mut output_queue4,
-            &mut output_queue5,
-        ];
+        let mut output = std::array::from_fn(|_| StorageLogQueue::empty(cs));
         let limit = 16;
-        demultiplex_storage_logs_inner(cs, &mut storage_log_queue, output, limit);
+        demultiplex_storage_logs_inner(cs, &mut storage_log_queue, &mut output, limit);
 
         cs.pad_and_shrink();
         let worker = Worker::new();
-        let mut owned_cs = owned_cs.into_assembly::<Global>();
+        let mut owned_cs = owned_cs.into_assembly::<std::alloc::Global>();
         owned_cs.print_gate_stats();
         assert!(owned_cs.check_if_satisfied(&worker));
     }

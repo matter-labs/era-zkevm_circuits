@@ -4,9 +4,9 @@ use crate::base_structures::{
 };
 use boojum::cs::{traits::cs::ConstraintSystem, Variable};
 use boojum::field::SmallField;
-use boojum::gadgets::keccak256;
+
 use boojum::gadgets::traits::auxiliary::PrettyComparison;
-use boojum::gadgets::u32::UInt32;
+
 use boojum::gadgets::u8::UInt8;
 use boojum::gadgets::{
     boolean::Boolean,
@@ -19,7 +19,6 @@ use boojum::gadgets::{
 use boojum::serde_utils::BigArraySerde;
 use cs_derive::*;
 use derivative::*;
-use std::collections::VecDeque;
 
 #[derive(Derivative, CSAllocatable, CSSelectable, CSVarLengthEncodable, WitnessHookable)]
 #[derivative(Clone, Copy, Debug)]

@@ -1,6 +1,5 @@
 use arrayvec::ArrayVec;
 
-use super::opcodes::context::apply_context;
 use super::pre_state::{create_prestate, PendingSponge};
 use super::state_diffs::{
     StateDiffsAccumulator, MAX_ADD_SUB_RELATIONS_PER_CYCLE, MAX_MUL_DIV_RELATIONS_PER_CYCLE,
@@ -462,10 +461,10 @@ where
         );
     }
 
-    // Ergs per pubdata
-    for (flag, value) in diffs_accumulator.new_ergs_per_pubdata.into_iter() {
-        new_state.ergs_per_pubdata_byte =
-            UInt32::conditionally_select(cs, flag, &value, &new_state.ergs_per_pubdata_byte);
+    // Pubdata revert counter at the global state
+    for (flag, value) in diffs_accumulator.new_pubdata_revert_counter.into_iter() {
+        new_state.pubdata_revert_counter =
+            UInt32::conditionally_select(cs, flag, &value, &new_state.pubdata_revert_counter);
     }
 
     // Tx number in block
@@ -481,6 +480,42 @@ where
     for (flag, value) in diffs_accumulator.context_u128_candidates.drain(..) {
         new_state.context_composite_u128 =
             UInt32::parallel_select(cs, flag, &value, &new_state.context_composite_u128);
+    }
+
+    // pubdata counters
+    for (flag, cost) in diffs_accumulator.pubdata_cost.into_iter() {
+        let new_pubdata_revert_counter =
+            i32_add_no_overflow(cs, &new_state.pubdata_revert_counter, &cost);
+        let new_current_frame_pubdata_counter = i32_add_no_overflow(
+            cs,
+            &new_state
+                .callstack
+                .current_context
+                .saved_context
+                .total_pubdata_spent,
+            &cost,
+        );
+
+        new_state.pubdata_revert_counter = UInt32::conditionally_select(
+            cs,
+            flag,
+            &new_pubdata_revert_counter,
+            &new_state.pubdata_revert_counter,
+        );
+        new_state
+            .callstack
+            .current_context
+            .saved_context
+            .total_pubdata_spent = UInt32::conditionally_select(
+            cs,
+            flag,
+            &new_current_frame_pubdata_counter,
+            &new_state
+                .callstack
+                .current_context
+                .saved_context
+                .total_pubdata_spent,
+        );
     }
 
     // Heap limit
@@ -530,7 +565,7 @@ where
             Num::parallel_select(cs, flag, &state, &new_state.memory_queue_state);
     }
 
-    // decommittment due to far call
+    // decommittment due to far call or log.decommit
     for (flag, length, state) in diffs_accumulator.decommitment_queue_candidates.into_iter() {
         new_state.code_decommittment_queue_length = UInt32::conditionally_select(
             cs,

@@ -1,30 +1,25 @@
 use std::collections::VecDeque;
 
 use super::*;
-use crate::base_structures::vm_state::*;
+
 use boojum::cs::{traits::cs::ConstraintSystem, Variable};
 use boojum::field::SmallField;
 use boojum::gadgets::keccak256;
 use boojum::gadgets::traits::auxiliary::PrettyComparison;
-use boojum::gadgets::u256::recompose_u256_as_u32x8;
-use boojum::gadgets::u32::UInt32;
+
 use boojum::gadgets::u8::UInt8;
 use boojum::gadgets::{
     boolean::Boolean,
-    queue::*,
     traits::{
-        allocatable::*,
-        encodable::{CircuitEncodable, CircuitEncodableExt, CircuitVarLengthEncodable},
-        selectable::Selectable,
-        witnessable::WitnessHookable,
+        encodable::CircuitVarLengthEncodable, selectable::Selectable, witnessable::WitnessHookable,
     },
 };
 use boojum::serde_utils::BigArraySerde;
 use cs_derive::*;
-use derivative::*;
 
 pub const BLOB_CHUNK_SIZE: usize = 31;
 pub const ELEMENTS_PER_4844_BLOCK: usize = 4096;
+pub const ENCODABLE_BYTES_PER_BLOB: usize = BLOB_CHUNK_SIZE * ELEMENTS_PER_4844_BLOCK;
 
 #[derive(Derivative, CSAllocatable, CSSelectable, WitnessHookable)]
 #[derivative(Clone, Copy, Debug)]

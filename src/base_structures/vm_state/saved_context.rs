@@ -63,6 +63,10 @@ pub struct ExecutionContextRecord<F: SmallField> {
     pub context_u128_value_composite: [UInt32<F>; 4],
 
     pub is_local_call: Boolean<F>,
+
+    pub total_pubdata_spent: UInt32<F>, // actually signed two-complement
+
+    pub stipend: UInt32<F>,
 }
 
 impl<F: SmallField> ExecutionContextRecord<F> {
@@ -102,11 +106,15 @@ impl<F: SmallField> ExecutionContextRecord<F> {
             context_u128_value_composite: [zero_u32; 4],
 
             is_local_call: boolean_false,
+
+            total_pubdata_spent: zero_u32,
+
+            stipend: zero_u32,
         }
     }
 }
 
-pub const EXECUTION_CONTEXT_RECORD_ENCODING_WIDTH: usize = 32;
+pub const EXECUTION_CONTEXT_RECORD_ENCODING_WIDTH: usize = 40;
 
 impl<F: SmallField> CircuitEncodable<F, EXECUTION_CONTEXT_RECORD_ENCODING_WIDTH>
     for ExecutionContextRecord<F>
@@ -159,116 +167,80 @@ impl<F: SmallField> CircuitEncodable<F, EXECUTION_CONTEXT_RECORD_ENCODING_WIDTH>
         // - sp
         // - pc
         // - eh
+        // - pubdata counter
+        // - stipend counter
         // - reverted_queue_segment_len
         // - shard ids
         // - few boolean flags
 
-        // as usual, take u32 and add something on top
+        let v27 = self.code_page.get_variable();
+        let v28 = self.base_page.get_variable();
+        let v29 = self.heap_upper_bound.get_variable();
+        let v30 = self.aux_heap_upper_bound.get_variable();
 
-        let v27 = Num::linear_combination(
+        let v31 = self.ergs_remaining.get_variable();
+        let v32 = self.total_pubdata_spent.get_variable();
+        let v33 = self.stipend.get_variable();
+        let v34 = self.reverted_queue_segment_len.get_variable();
+
+        // and now we can just pack the rest into 5 variables
+        // - sp
+        // - pc
+        // - eh
+        // - shard ids
+        // - few boolean flags
+
+        let v35 = self.sp.get_variable();
+        let v36 = self.pc.get_variable();
+        let v37 = self.exception_handler_loc.get_variable();
+        // pack shard IDs
+        let v38 = Num::linear_combination(
             cs,
             &[
-                (self.code_page.get_variable(), F::ONE),
-                (self.pc.get_variable(), F::from_u64_unchecked(1u64 << 32)),
-                (
-                    self.this_shard_id.get_variable(),
-                    F::from_u64_unchecked(1u64 << 48),
-                ),
-                (
-                    self.is_static_execution.get_variable(),
-                    F::from_u64_unchecked(1u64 << 56),
-                ),
-            ],
-        )
-        .get_variable();
-
-        let v28 = Num::linear_combination(
-            cs,
-            &[
-                (self.base_page.get_variable(), F::ONE),
-                (self.sp.get_variable(), F::from_u64_unchecked(1u64 << 32)),
-                (
-                    self.caller_shard_id.get_variable(),
-                    F::from_u64_unchecked(1u64 << 48),
-                ),
-                (
-                    self.is_kernel_mode.get_variable(),
-                    F::from_u64_unchecked(1u64 << 56),
-                ),
-            ],
-        )
-        .get_variable();
-
-        let v29 = Num::linear_combination(
-            cs,
-            &[
-                (self.ergs_remaining.get_variable(), F::ONE),
-                (
-                    self.exception_handler_loc.get_variable(),
-                    F::from_u64_unchecked(1u64 << 32),
-                ),
+                (self.this_shard_id.get_variable(), F::ONE),
                 (
                     self.code_shard_id.get_variable(),
-                    F::from_u64_unchecked(1u64 << 48),
+                    F::from_u64_unchecked(1u64 << 8),
+                ),
+                (
+                    self.caller_shard_id.get_variable(),
+                    F::from_u64_unchecked(1u64 << 16),
+                ),
+            ],
+        )
+        .get_variable();
+
+        // pack boolean flags
+        let v39 = Num::linear_combination(
+            cs,
+            &[
+                (self.is_static_execution.get_variable(), F::ONE),
+                (
+                    self.is_kernel_mode.get_variable(),
+                    F::from_u64_unchecked(1u64 << 8),
                 ),
                 (
                     self.is_local_call.get_variable(),
-                    F::from_u64_unchecked(1u64 << 56),
+                    F::from_u64_unchecked(1u64 << 16),
                 ),
             ],
         )
         .get_variable();
 
-        // now we have left
-        // - heap_upper_bound
-        // - aux_heap_upper_bound
-        // - reverted_queue_segment_len
-
-        let reverted_queue_segment_len_decomposition =
-            self.reverted_queue_segment_len.decompose_into_bytes(cs);
-        let v30 = Num::linear_combination(
-            cs,
-            &[
-                (self.heap_upper_bound.get_variable(), F::ONE),
-                (
-                    reverted_queue_segment_len_decomposition[0].get_variable(),
-                    F::from_u64_unchecked(1u64 << 32),
-                ),
-                (
-                    reverted_queue_segment_len_decomposition[1].get_variable(),
-                    F::from_u64_unchecked(1u64 << 40),
-                ),
-            ],
-        )
-        .get_variable();
-
-        let v31 = Num::linear_combination(
-            cs,
-            &[
-                (self.aux_heap_upper_bound.get_variable(), F::ONE),
-                (
-                    reverted_queue_segment_len_decomposition[2].get_variable(),
-                    F::from_u64_unchecked(1u64 << 32),
-                ),
-                (
-                    reverted_queue_segment_len_decomposition[3].get_variable(),
-                    F::from_u64_unchecked(1u64 << 40),
-                ),
-            ],
-        )
-        .get_variable();
-
-        [
+        let encoding = [
             v0, v1, v2, v3, v4, v5, v6, v7, v8, v9, v10, v11, v12, v13, v14, v15, v16, v17, v18,
-            v19, v20, v21, v22, v23, v24, v25, v26, v27, v28, v29, v30, v31,
-        ]
+            v19, v20, v21, v22, v23, v24, v25, v26, v27, v28, v29, v30, v31, v32, v33, v34, v35,
+            v36, v37, v38, v39,
+        ];
+
+        encoding
     }
 }
 
 // we also need allocate extended
 
 impl<F: SmallField> CSAllocatableExt<F> for ExecutionContextRecord<F> {
-    const INTERNAL_STRUCT_LEN: usize = 42;
+    const INTERNAL_STRUCT_LEN: usize = 44;
 
     fn create_without_value<CS: ConstraintSystem<F>>(cs: &mut CS) -> Self {
         // TODO: use more optimal allocation for bytes
@@ -319,6 +291,8 @@ impl<F: SmallField> CSAllocatableExt<F> for ExecutionContextRecord<F> {
             self.context_u128_value_composite[2].get_variable(),
             self.context_u128_value_composite[3].get_variable(),
             self.is_local_call.get_variable(),
+            self.total_pubdata_spent.get_variable(),
+            self.stipend.get_variable(),
         ]
     }
 
@@ -381,6 +355,10 @@ impl<F: SmallField> CSAllocatableExt<F> for ExecutionContextRecord<F> {
                 .map(|el| UInt32::from_variable_unchecked(el)),
 
                 is_local_call: Boolean::from_variable_unchecked(variables[41]),
+
+                total_pubdata_spent: UInt32::from_variable_unchecked(variables[42]),
+
+                stipend: UInt32::from_variable_unchecked(variables[43]),
             }
         }
     }
@@ -428,6 +406,12 @@ impl<F: SmallField> CSAllocatableExt<F> for ExecutionContextRecord<F> {
         ));
 
         dst.push(WitnessCastable::cast_into_source(witness.is_local_call));
+
+        dst.push(WitnessCastable::cast_into_source(
+            witness.total_pubdata_spent,
+        ));
+
+        dst.push(WitnessCastable::cast_into_source(witness.stipend));
     }
 
     fn witness_from_set_of_values(values: [F; Self::INTERNAL_STRUCT_LEN]) -> Self::Witness {
@@ -473,6 +457,10 @@ impl<F: SmallField> CSAllocatableExt<F> for ExecutionContextRecord<F> {
 
         let is_local_call: bool = WitnessCastable::cast_from_source(values[41]);
 
+        let total_pubdata_spent = WitnessCastable::cast_from_source(values[42]);
+
+        let stipend = WitnessCastable::cast_from_source(values[43]);
+
         Self::Witness {
             this,
             caller,
@@ -503,6 +491,10 @@ impl<F: SmallField> CSAllocatableExt<F> for ExecutionContextRecord<F> {
             context_u128_value_composite,
 
             is_local_call,
+
+            total_pubdata_spent,
+
+            stipend,
         }
     }
 }

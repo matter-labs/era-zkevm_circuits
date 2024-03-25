@@ -114,6 +114,7 @@ pub(crate) fn apply_calls_and_ret<
         specific_registers_updates: specific_registers_updates_for_ret,
         specific_registers_zeroing: specific_registers_zeroing_for_ret,
         remove_ptr_on_specific_registers: remove_ptr_on_specific_registers_for_ret,
+        new_pubdata_revert_counter: new_pubdata_revert_counter_for_ret,
     } = ret_data;
 
     let is_call_like = Boolean::multi_or(cs, &[apply_near_call, apply_far_call]);
@@ -183,86 +184,32 @@ pub(crate) fn apply_calls_and_ret<
 
     use boojum::gadgets::round_function::simulate_round_function;
 
-    // absorb by replacement
-    let round_0_initial = [
-        encoded_execution_record[0],
-        encoded_execution_record[1],
-        encoded_execution_record[2],
-        encoded_execution_record[3],
-        encoded_execution_record[4],
-        encoded_execution_record[5],
-        encoded_execution_record[6],
-        encoded_execution_record[7],
-        current_state[8],
-        current_state[9],
-        current_state[10],
-        current_state[11],
-    ];
+    let mut all_states = ArrayVec::<_, 5>::new();
+    assert!(encoded_execution_record.len() % 8 == 0);
+    for encoding_chunk in encoded_execution_record.array_chunks::<8>() {
+        // absorb by replacement
+        let round_initial = [
+            encoding_chunk[0],
+            encoding_chunk[1],
+            encoding_chunk[2],
+            encoding_chunk[3],
+            encoding_chunk[4],
+            encoding_chunk[5],
+            encoding_chunk[6],
+            encoding_chunk[7],
+            current_state[8],
+            current_state[9],
+            current_state[10],
+            current_state[11],
+        ];
 
-    let round_0_final =
-        simulate_round_function::<_, _, 8, 12, 4, R>(cs, round_0_initial, apply_any);
+        let round_final =
+            simulate_round_function::<_, _, 8, 12, 4, R>(cs, round_initial, apply_any);
 
-    current_state = round_0_final;
+        current_state = round_final;
 
-    let round_1_initial = [
-        encoded_execution_record[8],
-        encoded_execution_record[9],
-        encoded_execution_record[10],
-        encoded_execution_record[11],
-        encoded_execution_record[12],
-        encoded_execution_record[13],
-        encoded_execution_record[14],
-        encoded_execution_record[15],
-        current_state[8],
-        current_state[9],
-        current_state[10],
-        current_state[11],
-    ];
-
-    let round_1_final =
-        simulate_round_function::<_, _, 8, 12, 4, R>(cs, round_1_initial, apply_any);
-
-    current_state = round_1_final;
-
-    let round_2_initial = [
-        encoded_execution_record[16],
-        encoded_execution_record[17],
-        encoded_execution_record[18],
-        encoded_execution_record[19],
-        encoded_execution_record[20],
-        encoded_execution_record[21],
-        encoded_execution_record[22],
-        encoded_execution_record[23],
-        current_state[8],
-        current_state[9],
-        current_state[10],
-        current_state[11],
-    ];
-
-    let round_2_final =
-        simulate_round_function::<_, _, 8, 12, 4, R>(cs, round_2_initial, apply_any);
-
-    current_state = round_2_final;
-
-    let round_3_initial = [
-        encoded_execution_record[24],
-        encoded_execution_record[25],
-        encoded_execution_record[26],
-        encoded_execution_record[27],
-        encoded_execution_record[28],
-        encoded_execution_record[29],
-        encoded_execution_record[30],
-        encoded_execution_record[31],
-        current_state[8],
-        current_state[9],
-        current_state[10],
-        current_state[11],
-    ];
-
-    let round_3_final =
-        simulate_round_function::<_, _, 8, 12, 4, R>(cs, round_3_initial, apply_any);
-
-    current_state = round_3_final;
+        all_states.push((round_initial, round_final));
+    }
 
     let potential_final_state = current_state.map(|el| Num::from_variable(el));
 
@@ -339,32 +286,18 @@ pub(crate) fn apply_calls_and_ret<
     >::new();
     // first we push relations that are common, namely callstack sponge
 
-    common_relations_buffer.push((
-        apply_any,
-        round_0_initial.map(|el| Num::from_variable(el)),
-        round_0_final.map(|el| Num::from_variable(el)),
-    ));
-
-    common_relations_buffer.push((
-        apply_any,
-        round_1_initial.map(|el| Num::from_variable(el)),
-        round_1_final.map(|el| Num::from_variable(el)),
-    ));
-
-    common_relations_buffer.push((
-        apply_any,
-        round_2_initial.map(|el| Num::from_variable(el)),
-        round_2_final.map(|el| Num::from_variable(el)),
-    ));
-
-    common_relations_buffer.push((
-        apply_any,
-        round_3_initial.map(|el| Num::from_variable(el)),
-        round_3_final.map(|el| Num::from_variable(el)),
-    ));
+    for el in all_states.into_iter() {
+        common_relations_buffer.push((
+            apply_any,
+            el.0.map(|el| Num::from_variable(el)),
+            el.1.map(|el| Num::from_variable(el)),
+        ));
+    }
 
     // and now we append relations for far call, that are responsible for storage read and decommittment
     common_relations_buffer.extend(pending_sponges_for_far_call);
+
+    assert_eq!(common_relations_buffer.len(), 9);
 
     // now just append relations to select later on
 
@@ -503,10 +436,18 @@ pub(crate) fn apply_calls_and_ret<
         .context_u128_candidates
         .push((reset_context_value, empty_context_value));
 
-    debug_assert!(diffs_accumulator.decommitment_queue_candidates.is_none());
-    diffs_accumulator.decommitment_queue_candidates = Some((
+    diffs_accumulator.decommitment_queue_candidates.push((
         apply_far_call,
         new_decommittment_queue_len,
         new_decommittment_queue_tail,
     ));
+
+    let new_pubdata_revert_counter = UInt32::conditionally_select(
+        cs,
+        apply_ret,
+        &new_pubdata_revert_counter_for_ret,
+        &draft_vm_state.pubdata_revert_counter,
+    );
+    assert!(diffs_accumulator.new_pubdata_revert_counter.is_none());
+    diffs_accumulator.new_pubdata_revert_counter = Some((apply_any, new_pubdata_revert_counter));
 }

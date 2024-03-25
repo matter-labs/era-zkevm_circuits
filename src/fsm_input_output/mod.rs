@@ -1,7 +1,9 @@
 use super::*;
+use boojum::gadgets::traits::allocatable::CSAllocatableExt;
 use boojum::gadgets::traits::auxiliary::PrettyComparison;
 use cs_derive::*;
 
+use crate::boojum::cs::traits::cs::DstBuffer;
 use boojum::cs::gates::ConstantAllocatableCS;
 use boojum::cs::traits::cs::ConstraintSystem;
 use boojum::cs::Variable;
@@ -172,6 +174,78 @@ pub struct ClosedFormInputCompactForm<F: SmallField> {
     pub observable_output_committment: [Num<F>; CLOSED_FORM_COMMITTMENT_LENGTH],
     pub hidden_fsm_input_committment: [Num<F>; CLOSED_FORM_COMMITTMENT_LENGTH],
     pub hidden_fsm_output_committment: [Num<F>; CLOSED_FORM_COMMITTMENT_LENGTH],
+}
+
+impl<F: SmallField> CSAllocatableExt<F> for ClosedFormInputCompactForm<F> {
+    const INTERNAL_STRUCT_LEN: usize = 1 + 1 + CLOSED_FORM_COMMITTMENT_LENGTH * 4;
+
+    fn witness_from_set_of_values(values: [F; Self::INTERNAL_STRUCT_LEN]) -> Self::Witness {
+        use crate::boojum::gadgets::traits::castable::WitnessCastable;
+
+        let start_flag = WitnessCastable::cast_from_source(values[0]);
+        let completion_flag = WitnessCastable::cast_from_source(values[1]);
+
+        let observable_input_committment = [values[2], values[3], values[4], values[5]]
+            .map(|el| WitnessCastable::cast_from_source(el));
+        let observable_output_committment = [values[6], values[7], values[8], values[9]]
+            .map(|el| WitnessCastable::cast_from_source(el));
+        let hidden_fsm_input_committment = [values[10], values[11], values[12], values[13]]
+            .map(|el| WitnessCastable::cast_from_source(el));
+        let hidden_fsm_output_committment = [values[14], values[15], values[16], values[17]]
+            .map(|el| WitnessCastable::cast_from_source(el));
+
+        Self::Witness {
+            start_flag,
+            completion_flag,
+            observable_input_committment,
+            observable_output_committment,
+            hidden_fsm_input_committment,
+            hidden_fsm_output_committment,
+        }
+    }
+
+    fn flatten_as_variables(&self) -> [Variable; Self::INTERNAL_STRUCT_LEN]
+    where
+        [(); Self::INTERNAL_STRUCT_LEN]:,
+    {
+        [
+            self.start_flag.get_variable(),
+            self.completion_flag.get_variable(),
+            self.observable_input_committment[0].get_variable(),
+            self.observable_input_committment[1].get_variable(),
+            self.observable_input_committment[2].get_variable(),
+            self.observable_input_committment[3].get_variable(),
+            self.observable_output_committment[0].get_variable(),
+            self.observable_output_committment[1].get_variable(),
+            self.observable_output_committment[2].get_variable(),
+            self.observable_output_committment[3].get_variable(),
+            self.hidden_fsm_input_committment[0].get_variable(),
+            self.hidden_fsm_input_committment[1].get_variable(),
+            self.hidden_fsm_input_committment[2].get_variable(),
+            self.hidden_fsm_input_committment[3].get_variable(),
+            self.hidden_fsm_output_committment[0].get_variable(),
+            self.hidden_fsm_output_committment[1].get_variable(),
+            self.hidden_fsm_output_committment[2].get_variable(),
+            self.hidden_fsm_output_committment[3].get_variable(),
+        ]
+    }
+    fn set_internal_variables_values(witness: Self::Witness, dst: &mut DstBuffer<'_, '_, F>) {
+        // NOTE: must be same sequence as in `flatten_as_variables`
+        Boolean::set_internal_variables_values(witness.start_flag, dst);
+        Boolean::set_internal_variables_values(witness.completion_flag, dst);
+        for src in witness.observable_input_committment.into_iter() {
+            Num::set_internal_variables_values(src, dst);
+        }
+        for src in witness.observable_output_committment.into_iter() {
+            Num::set_internal_variables_values(src, dst);
+        }
+        for src in witness.hidden_fsm_input_committment.into_iter() {
+            Num::set_internal_variables_values(src, dst);
+        }
+        for src in witness.hidden_fsm_output_committment.into_iter() {
+            Num::set_internal_variables_values(src, dst);
+        }
+    }
 }
 
 impl<F: SmallField> ClosedFormInputCompactForm<F> {

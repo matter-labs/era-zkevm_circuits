@@ -1,34 +1,27 @@
-use crate::base_structures::state_diff_record::StateDiffRecord;
-use crate::demux_log_queue::StorageLogQueue;
-use crate::ethereum_types::U256;
 use crate::fsm_input_output::circuit_inputs::INPUT_OUTPUT_COMMITMENT_LENGTH;
-use crate::keccak256_round_function::keccak256_absorb_and_run_permutation;
+
 use boojum::algebraic_props::round_function::AlgebraicRoundFunction;
 use boojum::config::*;
-use boojum::crypto_bigint::{Zero, U1024};
 use boojum::cs::gates::ConstantAllocatableCS;
-use boojum::cs::traits::cs::{ConstraintSystem, DstBuffer};
-use boojum::cs::{Place, Variable};
+use boojum::cs::traits::cs::ConstraintSystem;
+
 use boojum::field::SmallField;
 use boojum::gadgets::boolean::Boolean;
 use boojum::gadgets::keccak256;
 use boojum::gadgets::non_native_field::implementations::*;
 use boojum::gadgets::num::Num;
-use boojum::gadgets::queue::CircuitQueue;
-use boojum::gadgets::queue::CircuitQueueWitness;
-use boojum::gadgets::queue::QueueState;
+
 use boojum::gadgets::traits::allocatable::{CSAllocatable, CSAllocatableExt, CSPlaceholder};
-use boojum::gadgets::traits::castable::WitnessCastable;
+
 use boojum::gadgets::traits::round_function::CircuitRoundFunction;
-use boojum::gadgets::traits::selectable::Selectable;
-use boojum::gadgets::traits::witnessable::WitnessHookable;
+
 use boojum::gadgets::u16::UInt16;
 use boojum::gadgets::u256::UInt256;
-use boojum::gadgets::u32::UInt32;
+
 use boojum::gadgets::u8::UInt8;
 use boojum::pairing::ff::{Field, PrimeField};
-use std::mem::MaybeUninit;
-use std::sync::{Arc, RwLock};
+
+use std::sync::Arc;
 
 use super::*;
 
@@ -446,7 +439,6 @@ pub fn ethereum_4844_data_into_zksync_pubdata(input: &[u8]) -> Vec<u8> {
 
 #[cfg(test)]
 mod tests {
-    use std::alloc::Global;
     use std::collections::VecDeque;
 
     use super::*;
@@ -458,19 +450,17 @@ mod tests {
     use boojum::cs::CSGeometry;
     use boojum::cs::*;
     use boojum::field::goldilocks::GoldilocksField;
-    use boojum::field::traits::field_like::PrimeFieldLike;
-    use boojum::field::Field;
     use boojum::field::SmallField;
-    use boojum::gadgets::queue::CircuitQueueRawWitness;
+
     use boojum::gadgets::tables::byte_split::ByteSplitTable;
     use boojum::gadgets::tables::*;
     use boojum::implementations::poseidon2::Poseidon2Goldilocks;
     use boojum::pairing::bls12_381::G1;
     use boojum::pairing::ff::PrimeFieldRepr;
-    use boojum::pairing::ff::{Field as PairingField, PrimeField, SqrtField};
+    use boojum::pairing::ff::{Field as PairingField, PrimeField};
     use boojum::worker::Worker;
+    use rand::Rand;
     use rand::SeedableRng;
-    use rand::{Rand, Rng};
 
     type F = GoldilocksField;
     type P = GoldilocksField;
@@ -651,7 +641,6 @@ mod tests {
         let evaluation_point_fr = Bls12_381Fr::from_repr(evaluation_point_repr).unwrap();
         dbg!(evaluation_point_fr);
 
-        use boojum::pairing::bls12_381::FrRepr;
         // evaluate polynomial
         let mut evaluation_result = Bls12_381Fr::zero();
         let mut power = Bls12_381Fr::one();
@@ -707,7 +696,7 @@ mod tests {
 
         cs.pad_and_shrink();
 
-        let mut cs = owned_cs.into_assembly::<Global>();
+        let mut cs = owned_cs.into_assembly::<std::alloc::Global>();
         cs.print_gate_stats();
         let worker = Worker::new();
         assert!(cs.check_if_satisfied(&worker));
@@ -731,6 +720,7 @@ mod tests {
 
     #[test]
     fn test_data_roundtrip() {
+        use rand::Rng;
         let mut rng = rand::XorShiftRng::new_unseeded();
         let zksync_data: Vec<u8> = (0..(31 * 4096)).map(|_| rng.gen()).collect();
         let monomial_form = zksync_pubdata_into_monomial_form_poly(&zksync_data);

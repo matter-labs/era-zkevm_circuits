@@ -18,6 +18,7 @@ use crate::main_vm::opcodes::call_ret_impl::far_call::log_query::LogQueryWitness
 use crate::main_vm::state_diffs::MAX_SPONGES_PER_CYCLE;
 use crate::main_vm::witness_oracle::SynchronizedWitnessOracle;
 use crate::main_vm::witness_oracle::WitnessOracle;
+use crate::tables::CallCostsAndStipendsTable;
 use arrayvec::ArrayVec;
 use boojum::algebraic_props::round_function::AlgebraicRoundFunction;
 use boojum::cs::traits::cs::DstBuffer;
@@ -421,8 +422,30 @@ where
 
         higher_bytes_are_zeroes
     };
+    let target_is_userspace = target_is_kernel.negated(cs);
 
     let mut far_call_abi = *far_call_abi;
+
+    // convert ergs
+    let conversion_constant = UInt32::allocated_constant(
+        cs,
+        zkevm_opcode_defs::system_params::INTERNAL_ERGS_TO_VISIBLE_ERGS_CONVERSION_CONSTANT,
+    );
+    let cap = UInt32::allocated_constant(cs, u32::MAX);
+    far_call_abi.ergs_passed = if cs.gate_is_allowed::<U8x4FMAGate>() {
+        let zero_u32 = UInt32::zero(cs);
+        let [(low, _), (high, _)] = UInt32::fma_with_carry(
+            cs,
+            far_call_abi.ergs_passed,
+            conversion_constant,
+            zero_u32,
+            zero_u32,
+        );
+        let overflow = high.is_zero(cs);
+        UInt32::conditionally_select(cs, overflow, &cap, &low)
+    } else {
+        unimplemented!()
+    };
 
     // mask flags in ABI if not applicable
     far_call_abi.constructor_call =
@@ -460,165 +483,223 @@ where
 
     let mut all_pending_sponges = ArrayVec::new();
 
-    let (bytecode_hash_is_trivial, bytecode_hash, (new_forward_queue_tail, new_forward_queue_len)) =
-        may_be_read_code_hash(
-            cs,
-            &mut all_pending_sponges,
-            &destination_address,
-            &destination_shard,
-            &target_is_zkporter,
-            &global_context.zkporter_is_available,
-            &execute,
-            &global_context.default_aa_code_hash,
-            &target_is_kernel,
-            draft_vm_state
-                .callstack
-                .current_context
-                .log_queue_forward_tail,
-            draft_vm_state
-                .callstack
-                .current_context
-                .log_queue_forward_part_length,
-            timestamp_to_use_for_decommittment_request,
-            draft_vm_state.tx_number_in_block,
-            witness_oracle,
-            round_function,
-        );
-
-    // now we should do validation BEFORE decommittment
-
-    let zero_u32 = UInt32::zero(cs);
-
-    let target_code_memory_page = UInt32::conditionally_select(
+    let (
+        call_to_unreachable,
+        bytecode_hash_from_storage,
+        (new_forward_queue_tail, new_forward_queue_len),
+    ) = may_be_read_code_hash(
         cs,
-        bytecode_hash_is_trivial,
-        &zero_u32,
-        &default_target_memory_page,
+        &mut all_pending_sponges,
+        &destination_address,
+        &destination_shard,
+        &target_is_zkporter,
+        &global_context.zkporter_is_available,
+        &execute,
+        draft_vm_state
+            .callstack
+            .current_context
+            .log_queue_forward_tail,
+        draft_vm_state
+            .callstack
+            .current_context
+            .log_queue_forward_part_length,
+        timestamp_to_use_for_decommittment_request,
+        draft_vm_state.tx_number_in_block,
+        witness_oracle,
+        round_function,
     );
 
+    assert_eq!(all_pending_sponges.len(), 3);
+
+    // exceptions, along with `map_to_trivial` indicate whether we will or will decommit code
+    // into memory, or will just use UNMAPPED_PAGE
+    let mut exceptions = ArrayVec::<Boolean<F>, 6>::new();
+    exceptions.push(call_to_unreachable);
+
+    // now we should do validation BEFORE decommittment
+    let zero_u32 = UInt32::zero(cs);
+
+    let limbs_are_zero = bytecode_hash_from_storage.inner.map(|el| el.is_zero(cs));
+    let bytecode_is_empty = Boolean::multi_and(cs, &limbs_are_zero);
     // first we validate if code hash is indeed in the format that we expect
 
     // If we do not do "constructor call" then 2nd byte should be 0,
     // otherwise it's 1
 
-    let bytecode_hash_upper_decomposition = bytecode_hash.inner[7].decompose_into_bytes(cs);
+    let bytecode_hash_from_storage_upper_decomposition =
+        bytecode_hash_from_storage.inner[7].decompose_into_bytes(cs);
 
-    let version_byte = bytecode_hash_upper_decomposition[3];
-    let code_hash_version_byte =
-        UInt8::allocated_constant(cs, zkevm_opcode_defs::ContractCodeSha256::VERSION_BYTE);
-    let versioned_byte_is_valid = UInt8::equals(cs, &version_byte, &code_hash_version_byte);
-    let versioned_byte_is_invalid = versioned_byte_is_valid.negated(cs);
+    let version_byte = bytecode_hash_from_storage_upper_decomposition[3];
+    let code_hash_version_byte = UInt8::allocated_constant(
+        cs,
+        zkevm_opcode_defs::ContractCodeSha256Format::VERSION_BYTE,
+    );
+    let blob_version_byte =
+        UInt8::allocated_constant(cs, zkevm_opcode_defs::BlobSha256Format::VERSION_BYTE);
 
-    let marker_byte = bytecode_hash_upper_decomposition[2];
-    let is_normal_call_marker = marker_byte.is_zero(cs);
+    assert_eq!(
+        zkevm_opcode_defs::ContractCodeSha256Format::CODE_AT_REST_MARKER,
+        zkevm_opcode_defs::BlobSha256Format::CODE_AT_REST_MARKER
+    );
+    assert_eq!(
+        zkevm_opcode_defs::ContractCodeSha256Format::YET_CONSTRUCTED_MARKER,
+        zkevm_opcode_defs::BlobSha256Format::YET_CONSTRUCTED_MARKER
+    );
+
+    let code_at_rest_version_byte = UInt8::allocated_constant(
+        cs,
+        zkevm_opcode_defs::ContractCodeSha256Format::CODE_AT_REST_MARKER,
+    );
     let now_in_construction_marker_byte = UInt8::allocated_constant(
         cs,
-        zkevm_opcode_defs::ContractCodeSha256::YET_CONSTRUCTED_MARKER,
+        zkevm_opcode_defs::ContractCodeSha256Format::YET_CONSTRUCTED_MARKER,
     );
+
+    let versioned_byte_is_native_code = UInt8::equals(cs, &version_byte, &code_hash_version_byte);
+    let versioned_byte_is_evm_bytecode = UInt8::equals(cs, &version_byte, &blob_version_byte);
+
+    let marker_byte = bytecode_hash_from_storage_upper_decomposition[2];
+    let is_code_at_rest_marker = UInt8::equals(cs, &marker_byte, &code_at_rest_version_byte);
     let is_constructor_call_marker =
         UInt8::equals(cs, &marker_byte, &now_in_construction_marker_byte);
-    let unknown_marker =
-        Boolean::multi_or(cs, &[is_normal_call_marker, is_constructor_call_marker]).negated(cs);
 
-    // NOTE: if bytecode hash is trivial then it's 0, so version byte is not valid!
-    let code_format_exception = Boolean::multi_or(cs, &[versioned_byte_is_invalid, unknown_marker]);
+    let abi_is_normal_call = far_call_abi.constructor_call.negated(cs);
 
-    // we do not remask right away yet
+    let normal_call_markers_match =
+        Boolean::multi_and(cs, &[abi_is_normal_call, is_code_at_rest_marker]);
 
-    let normal_call_code = far_call_abi.constructor_call.negated(cs);
-
-    let can_call_normally = Boolean::multi_and(cs, &[is_normal_call_marker, normal_call_code]);
-    let can_call_constructor = Boolean::multi_and(
+    let constructor_call_markers_match = Boolean::multi_and(
         cs,
-        &[is_constructor_call_marker, far_call_abi.constructor_call],
-    );
-    let can_call_code = Boolean::multi_or(cs, &[can_call_normally, can_call_constructor]);
-
-    let marker_byte_masked = UInt8::allocated_constant(
-        cs,
-        zkevm_opcode_defs::ContractCodeSha256::CODE_AT_REST_MARKER,
+        &[far_call_abi.constructor_call, is_constructor_call_marker],
     );
 
-    let bytecode_at_rest_top_word = UInt32::from_le_bytes(
+    let markers_match = Boolean::multi_or(
         cs,
-        [
-            bytecode_hash_upper_decomposition[0],
-            bytecode_hash_upper_decomposition[1],
-            marker_byte_masked,
-            code_hash_version_byte,
+        &[normal_call_markers_match, constructor_call_markers_match],
+    );
+    let markers_mismatch = markers_match.negated(cs);
+
+    let can_call_native_without_masking =
+        Boolean::multi_and(cs, &[markers_match, versioned_byte_is_native_code]);
+    let can_not_call_native_without_masking =
+        Boolean::multi_and(cs, &[markers_mismatch, versioned_byte_is_native_code]);
+    let should_mask_native = Boolean::multi_and(
+        cs,
+        &[can_not_call_native_without_masking, target_is_userspace],
+    );
+    let mask_to_default_aa = should_mask_native;
+    let exception_over_native_bytecode_format =
+        Boolean::multi_and(cs, &[can_not_call_native_without_masking, target_is_kernel]);
+
+    // same logic for EVM simulator
+    let can_call_evm_simulator_without_masking =
+        Boolean::multi_and(cs, &[markers_match, versioned_byte_is_evm_bytecode]);
+
+    let can_not_call_evm_simulator_without_masking =
+        Boolean::multi_and(cs, &[markers_mismatch, versioned_byte_is_evm_bytecode]);
+    let should_mask_evm_simulator = Boolean::multi_and(
+        cs,
+        &[
+            can_not_call_evm_simulator_without_masking,
+            target_is_userspace,
+        ],
+    );
+    let mask_to_default_aa =
+        Boolean::multi_or(cs, &[mask_to_default_aa, should_mask_evm_simulator]);
+    let exception_over_evm_simulator_bytecode_format = Boolean::multi_and(
+        cs,
+        &[can_not_call_evm_simulator_without_masking, target_is_kernel],
+    );
+
+    // and over empty bytecode
+    let mask_empty_to_default_aa =
+        Boolean::multi_and(cs, &[bytecode_is_empty, target_is_userspace]);
+    let mask_to_default_aa = Boolean::multi_or(cs, &[mask_to_default_aa, mask_empty_to_default_aa]);
+    let exception_over_empty_bytecode =
+        Boolean::multi_and(cs, &[bytecode_is_empty, target_is_kernel]);
+
+    let code_format_exception = Boolean::multi_or(
+        cs,
+        &[
+            exception_over_native_bytecode_format,
+            exception_over_evm_simulator_bytecode_format,
+            exception_over_empty_bytecode,
         ],
     );
 
-    let mut bytecode_at_storage_format = bytecode_hash;
-    bytecode_at_storage_format.inner[7] = bytecode_at_rest_top_word;
-
+    // our canonical decommitment hash format has upper 4 bytes zeroed out
     let zero_u256 = UInt256::zero(cs);
-
-    let masked_value_if_mask = UInt256::conditionally_select(
-        cs,
-        target_is_kernel,
-        &zero_u256,
-        &global_context.default_aa_code_hash,
-    );
 
     let masked_bytecode_hash = UInt256::conditionally_select(
         cs,
-        can_call_code,
-        &bytecode_at_storage_format,
-        &masked_value_if_mask,
+        mask_to_default_aa,
+        &global_context.default_aa_code_hash,
+        &bytecode_hash_from_storage,
     );
+    let masked_bytecode_hash = UInt256::conditionally_select(
+        cs,
+        can_call_evm_simulator_without_masking,
+        &global_context.evm_simulator_code_hash,
+        &masked_bytecode_hash,
+    );
+    let masked_bytecode_hash =
+        UInt256::conditionally_select(cs, code_format_exception, &zero_u256, &masked_bytecode_hash);
+
+    // after that logic of bytecode length is uniform
 
     // at the end of the day all our exceptions will lead to memory page being 0
-
-    let masked_bytecode_hash_upper_decomposition =
-        masked_bytecode_hash.inner[7].decompose_into_bytes(cs);
-
-    let mut code_hash_length_in_words = UInt16::from_le_bytes(
+    let code_len_encoding_word = masked_bytecode_hash.inner[7];
+    let masked_bytecode_hash_upper_decomposition = code_len_encoding_word.to_le_bytes(cs);
+    let code_hash_length_in_words = UInt16::from_le_bytes(
         cs,
         [
             masked_bytecode_hash_upper_decomposition[0],
             masked_bytecode_hash_upper_decomposition[1],
         ],
     );
-    code_hash_length_in_words = code_hash_length_in_words.mask_negated(cs, code_format_exception);
 
-    // if we call now-in-construction system contract, then we formally mask into 0 (even though it's not needed),
-    // and we should put an exception here
-
-    let can_not_call_code = can_call_code.negated(cs);
-    let call_now_in_construction_kernel =
-        Boolean::multi_and(cs, &[can_not_call_code, target_is_kernel]);
-
-    // exceptions, along with `bytecode_hash_is_trivial` indicate whether we will or will decommit code
-    // into memory, or will just use UNMAPPED_PAGE
-    let mut exceptions = ArrayVec::<Boolean<F>, 5>::new();
     exceptions.push(code_format_exception);
-    exceptions.push(call_now_in_construction_kernel);
+
+    // normalize bytecode hash
+    let mut normalized_preimage = masked_bytecode_hash;
+    normalize_bytecode_hash_for_decommit(cs, &mut normalized_preimage);
 
     // resolve passed ergs, passed calldata page, etc
 
     let forward_fat_pointer = forwarding_data.forward_fat_pointer;
+    let do_not_forward_ptr = forward_fat_pointer.negated(cs);
     let src0_is_integer = common_opcode_state.src0_view.is_ptr.negated(cs);
 
     let fat_ptr_expected_exception =
         Boolean::multi_and(cs, &[forward_fat_pointer, src0_is_integer]);
     exceptions.push(fat_ptr_expected_exception);
+    let non_pointer_expected_exception = Boolean::multi_and(
+        cs,
+        &[do_not_forward_ptr, common_opcode_state.src0_view.is_ptr],
+    );
+    exceptions.push(non_pointer_expected_exception);
 
     // add pointer validation cases
     exceptions.push(common_abi_parts.ptr_validation_data.generally_invalid);
     exceptions.push(common_abi_parts.ptr_validation_data.is_non_addressable);
 
-    let do_not_forward_ptr = forward_fat_pointer.negated(cs);
-
     let exceptions_collapsed = Boolean::multi_or(cs, &exceptions);
 
-    // if crate::config::CIRCUIT_VERSOBE {
-    //     if execute.witness_hook(&*cs)().unwrap() {
-    //         dbg!(code_format_exception.witness_hook(&*cs)().unwrap());
-    //         dbg!(call_now_in_construction_kernel.witness_hook(&*cs)().unwrap());
-    //         dbg!(fat_ptr_expected_exception.witness_hook(&*cs)().unwrap());
-    //     }
-    // }
+    if crate::config::CIRCUIT_VERSOBE {
+        if execute.witness_hook(&*cs)().unwrap() {
+            dbg!(call_to_unreachable.witness_hook(&*cs)().unwrap());
+            dbg!(exception_over_native_bytecode_format.witness_hook(&*cs)().unwrap());
+            dbg!(exception_over_evm_simulator_bytecode_format.witness_hook(&*cs)().unwrap());
+            dbg!(exception_over_empty_bytecode.witness_hook(&*cs)().unwrap());
+            dbg!(can_call_native_without_masking.witness_hook(&*cs)().unwrap());
+            dbg!(can_call_evm_simulator_without_masking.witness_hook(&*cs)().unwrap());
+            dbg!(code_format_exception.witness_hook(&*cs)().unwrap());
+            dbg!(fat_ptr_expected_exception.witness_hook(&*cs)().unwrap());
+            dbg!(bytecode_hash_from_storage.witness_hook(&*cs)().unwrap());
+            dbg!(code_hash_length_in_words.witness_hook(&*cs)().unwrap());
+            dbg!(normalized_preimage.witness_hook(&*cs)().unwrap());
+        }
+    }
 
     let fat_ptr = common_abi_parts.fat_ptr;
     // we readjust before heap resize
@@ -730,43 +811,39 @@ where
         &current_callstack_entry.aux_heap_upper_bound,
     );
 
-    // now any extra cost
-    let callee_stipend = if FORCED_ERGS_FOR_MSG_VALUE_SIMUALTOR == false {
-        zero_u32
-    } else {
-        let is_msg_value_simulator_address_low =
-            UInt32::allocated_constant(cs, zkevm_opcode_defs::ADDRESS_MSG_VALUE as u32);
-        let target_low_is_msg_value_simulator = UInt32::equals(
-            cs,
-            &destination_address.inner[0],
-            &is_msg_value_simulator_address_low,
-        );
-        // we know that that msg.value simulator is kernel, so we test equality of low address segment and test for kernel
-        let target_is_msg_value =
-            Boolean::multi_and(cs, &[target_is_kernel, target_low_is_msg_value_simulator]);
-        let is_system_abi = far_call_abi.system_call;
-        let require_extra = Boolean::multi_and(cs, &[target_is_msg_value, is_system_abi]);
+    // we have a separate table that says:
+    // - how much we force-take from caller and give to callee
+    // - how much we just give to callee out of thin air
+    // this is only true for system contracts, so we mask an efficient address
 
-        let additive_cost = UInt32::allocated_constant(
-            cs,
-            zkevm_opcode_defs::system_params::MSG_VALUE_SIMULATOR_ADDITIVE_COST,
-        );
-        let max_pubdata_bytes = UInt32::allocated_constant(
-            cs,
-            zkevm_opcode_defs::system_params::MSG_VALUE_SIMULATOR_PUBDATA_BYTES_TO_PREPAY,
-        );
+    let address_low_masked = common_opcode_state.src1_view.u32x8_view[1].mask(cs, target_is_kernel);
+    let address_low_masked = address_low_masked.mask(cs, far_call_abi.system_call);
+    let table_id = cs
+        .get_table_id_for_marker::<CallCostsAndStipendsTable>()
+        .expect("table of costs and stipends must exist");
+    let (default_extra_cost, default_stipend) =
+        zkevm_opcode_defs::STIPENDS_AND_EXTRA_COSTS_TABLE[0];
+    assert_eq!(default_extra_cost, 0);
+    assert_eq!(default_stipend, 0);
+    let [extra_ergs_from_caller_to_callee, callee_stipend] =
+        cs.perform_lookup::<1, 2>(table_id, &[address_low_masked.get_variable()]);
+    let extra_ergs_from_caller_to_callee =
+        unsafe { UInt32::from_variable_unchecked(extra_ergs_from_caller_to_callee) };
+    let callee_stipend = unsafe { UInt32::from_variable_unchecked(callee_stipend) };
 
-        let pubdata_cost =
-            max_pubdata_bytes.non_widening_mul(cs, &draft_vm_state.ergs_per_pubdata_byte);
-        let cost = pubdata_cost.add_no_overflow(cs, additive_cost);
-
-        cost.mask(cs, require_extra)
-    };
+    let evm_simulator_stipend =
+        UInt32::allocated_constant(cs, zkevm_opcode_defs::system_params::EVM_SIMULATOR_STIPEND);
+    let callee_stipend = UInt32::conditionally_select(
+        cs,
+        can_call_evm_simulator_without_masking,
+        &evm_simulator_stipend,
+        &callee_stipend,
+    );
 
     let (ergs_left_after_extra_costs, uf) =
-        ergs_left_after_growth.overflowing_sub(cs, callee_stipend);
+        ergs_left_after_growth.overflowing_sub(cs, extra_ergs_from_caller_to_callee);
     let ergs_left_after_extra_costs = ergs_left_after_extra_costs.mask_negated(cs, uf); // if not enough - set to 0
-    let callee_stipend = callee_stipend.mask_negated(cs, uf); // also set to 0 if we were not able to take it
+    let extra_ergs_from_caller_to_callee = extra_ergs_from_caller_to_callee.mask_negated(cs, uf); // also set to 0 if we were not able to take it
     exceptions.push(uf);
 
     // now we can indeed decommit
@@ -775,7 +852,7 @@ where
     let valid_execution = exception.negated(cs);
     let should_decommit = Boolean::multi_and(cs, &[execute, valid_execution]);
 
-    let target_code_memory_page = target_code_memory_page.mask(cs, should_decommit);
+    let target_code_memory_page = default_target_memory_page.mask(cs, should_decommit);
 
     // if crate::config::CIRCUIT_VERSOBE {
     //     if execute.witness_hook(&*cs)().unwrap() {
@@ -794,7 +871,7 @@ where
         &mut all_pending_sponges,
         &should_decommit,
         &ergs_left_after_extra_costs,
-        &masked_bytecode_hash,
+        &normalized_preimage,
         &code_hash_length_in_words,
         &draft_vm_state.code_decommittment_queue_state,
         &draft_vm_state.code_decommittment_queue_length,
@@ -804,10 +881,13 @@ where
         round_function,
     );
 
+    assert_eq!(all_pending_sponges.len(), 4);
+
     let exception = Boolean::multi_or(cs, &[exception, not_enough_ergs_to_decommit]);
 
     if crate::config::CIRCUIT_VERSOBE {
         if execute.witness_hook(&*cs)().unwrap_or(false) {
+            dbg!(not_enough_ergs_to_decommit.witness_hook(&*cs)().unwrap());
             dbg!(exception.witness_hook(&*cs)().unwrap());
         }
     }
@@ -884,6 +964,18 @@ where
 
     let remaining_ergs_if_pass = remaining_for_this_context;
     let passed_ergs_if_pass = ergs_to_pass;
+    // this can not overflow by construction
+    let passed_ergs_if_pass = unsafe {
+        UInt32::from_variable_unchecked(
+            Num::from_variable(passed_ergs_if_pass.get_variable())
+                .add(
+                    cs,
+                    &Num::from_variable(extra_ergs_from_caller_to_callee.get_variable()),
+                )
+                .get_variable(),
+        )
+    };
+    // but out of thin air stipend must not overflow
     let passed_ergs_if_pass = passed_ergs_if_pass.add_no_overflow(cs, callee_stipend);
 
     current_callstack_entry.ergs_remaining = remaining_ergs_if_pass;
@@ -925,12 +1017,14 @@ where
         cs,
         &[is_static_call, current_callstack_entry.is_static_execution],
     );
+    // if we call EVM simulator we actually reset static flag
+    let next_is_static_masked = next_is_static.mask_negated(cs, versioned_byte_is_evm_bytecode);
 
     // actually parts to the new one
     new_callstack_entry.ergs_remaining = passed_ergs_if_pass;
     new_callstack_entry.pc = dst_pc;
     new_callstack_entry.exception_handler_loc = eh_pc;
-    new_callstack_entry.is_static_execution = next_is_static;
+    new_callstack_entry.is_static_execution = next_is_static_masked;
 
     // we need to decide whether new frame is kernel or not for degelatecall
     let new_frame_is_kernel = Boolean::conditionally_select(
@@ -940,6 +1034,26 @@ where
         &target_is_kernel,
     );
     new_callstack_entry.is_kernel_mode = new_frame_is_kernel;
+
+    // heap and aux heaps for kernel mode get extra
+    let memory_size_stipend_for_kernel = UInt32::allocated_constant(
+        cs,
+        zkevm_opcode_defs::system_params::NEW_KERNEL_FRAME_MEMORY_STIPEND,
+    );
+    let memory_size_stipend_for_userspace = UInt32::allocated_constant(
+        cs,
+        zkevm_opcode_defs::system_params::NEW_FRAME_MEMORY_STIPEND,
+    );
+
+    let memory_stipend = UInt32::conditionally_select(
+        cs,
+        new_callstack_entry.is_kernel_mode,
+        &memory_size_stipend_for_kernel,
+        &memory_size_stipend_for_userspace,
+    );
+
+    new_callstack_entry.heap_upper_bound = memory_stipend;
+    new_callstack_entry.aux_heap_upper_bound = memory_stipend;
 
     // code part
     new_callstack_entry.code_shard_id = destination_shard;
@@ -1007,24 +1121,28 @@ where
 
     let new_r1 = final_fat_ptr.into_register(cs);
 
-    if crate::config::CIRCUIT_VERSOBE {
-        if (execute.witness_hook(&*cs))().unwrap_or(false) {
-            println!(
-                "R1 value after far call is {:?}",
-                new_r1.witness_hook(cs)().unwrap()
-            );
-        }
-    }
+    // we put markers of:
+    // - constructor call
+    // - system call
+    // - if EVM simulator - if original code was static
 
-    let one = Num::allocated_constant(cs, F::ONE);
-
-    let r2_low = Num::fma(
+    let original_call_was_static = next_is_static.mask(cs, versioned_byte_is_evm_bytecode);
+    let r2_low = Num::linear_combination(
         cs,
-        &Num::from_variable(far_call_abi.constructor_call.get_variable()),
-        &one,
-        &F::ONE,
-        &Num::from_variable(far_call_abi.system_call.get_variable()),
-        &F::TWO,
+        &[
+            (
+                far_call_abi.constructor_call.get_variable(),
+                F::from_u64_unchecked(1u64 << 0),
+            ),
+            (
+                far_call_abi.system_call.get_variable(),
+                F::from_u64_unchecked(1u64 << 1),
+            ),
+            (
+                original_call_was_static.get_variable(),
+                F::from_u64_unchecked(1u64 << 2),
+            ),
+        ],
     );
 
     let r2_low = unsafe { UInt32::from_variable_unchecked(r2_low.get_variable()) };
@@ -1121,8 +1239,6 @@ pub fn may_be_read_code_hash<
     target_is_zkporter: &Boolean<F>,
     zkporter_is_available: &Boolean<F>,
     should_execute: &Boolean<F>,
-    default_aa_code_hash: &UInt256<F>,
-    target_is_kernel: &Boolean<F>,
     forward_queue_tail: [Num<F>; QUEUE_STATE_WIDTH],
     forward_queue_length: UInt32<F>,
     timestamp_to_use_for_read_request: UInt32<F>,
@@ -1225,33 +1341,42 @@ where
     log.read_value = read_value;
     log.written_value = read_value; // our convension as in LOG opcode
 
+    // we should access pubdata cost for as it's always logged on storage access
+    {
+        let oracle = witness_oracle.clone();
+        // we should assemble all the dependencies here, and we will use AllocateExt here
+        let mut dependencies =
+            Vec::with_capacity(<LogQuery<F> as CSAllocatableExt<F>>::INTERNAL_STRUCT_LEN + 1);
+        dependencies.push(should_read.get_variable().into());
+        dependencies.extend(Place::from_variables(log.flatten_as_variables()));
+
+        // we always access witness, as even for writes we have to get a claimed read value!
+        let _pubdata_cost = UInt32::allocate_from_closure_and_dependencies(
+            cs,
+            move |inputs: &[F]| {
+                let execute = <bool as WitnessCastable<F, F>>::cast_from_source(inputs[0]);
+                let mut log_query =
+                    [F::ZERO; <LogQuery<F> as CSAllocatableExt<F>>::INTERNAL_STRUCT_LEN];
+                log_query.copy_from_slice(&inputs[1..]);
+                let log_query: LogQueryWitness<F> =
+                    CSAllocatableExt::witness_from_set_of_values(log_query);
+
+                let mut guard = oracle.inner.write().expect("not poisoned");
+                let witness = guard.get_pubdata_cost_for_query(&log_query, false, execute);
+                drop(guard);
+
+                witness
+            },
+            &dependencies,
+        );
+    }
+
     let code_hash_from_storage = read_value;
 
-    let mut bytecode_hash = code_hash_from_storage;
-    let limbs_are_zero = bytecode_hash.inner.map(|el| el.is_zero(cs));
-    let bytecode_is_empty = Boolean::multi_and(cs, &limbs_are_zero);
+    let bytecode_hash = code_hash_from_storage;
 
-    let target_is_userspace = target_is_kernel.negated(cs);
-    let mask_for_default_aa =
-        Boolean::multi_and(cs, &[should_read, bytecode_is_empty, target_is_userspace]);
-
-    // mask based on some conventions
-    // first - mask for default AA
-    bytecode_hash = UInt256::conditionally_select(
-        cs,
-        mask_for_default_aa,
-        &default_aa_code_hash,
-        &bytecode_hash,
-    );
-
-    // - if we couldn't read porter
-    bytecode_hash =
-        UInt256::conditionally_select(cs, needs_porter_mask, &zero_u256, &bytecode_hash);
-
-    let dont_mask_to_default_aa = mask_for_default_aa.negated(cs);
-    let t0 = Boolean::multi_and(cs, &[bytecode_is_empty, dont_mask_to_default_aa]);
     let skip_read = should_read.negated(cs);
-    let bytecode_hash_is_trivial = Boolean::multi_or(cs, &[t0, needs_porter_mask, skip_read]);
+    let map_page_to_trivial = Boolean::multi_or(cs, &[needs_porter_mask, skip_read]);
 
     // now process the sponges on whether we did read
     let (new_forward_queue_tail, new_forward_queue_length) =
@@ -1273,7 +1398,7 @@ where
     );
 
     (
-        bytecode_hash_is_trivial,
+        map_page_to_trivial,
         bytecode_hash,
         (new_forward_queue_tail, new_forward_queue_length),
     )
@@ -1456,31 +1581,8 @@ where
     let num_words_in_bytecode =
         unsafe { UInt32::from_variable_unchecked(num_words_in_bytecode.get_variable()) };
 
-    let cost_of_decommittment =
+    let default_cost_of_decommittment =
         cost_of_decommit_per_word.non_widening_mul(cs, &num_words_in_bytecode);
-
-    let (ergs_after_decommit_may_be, uf) =
-        ergs_remaining.overflowing_sub(cs, cost_of_decommittment);
-
-    let not_enough_ergs_to_decommit = uf;
-    let have_enough_ergs_to_decommit = uf.negated(cs);
-    let should_decommit = Boolean::multi_and(cs, &[*should_decommit, have_enough_ergs_to_decommit]);
-
-    // if we do not decommit then we will eventually map into 0 page for 0 extra ergs
-    let ergs_remaining_after_decommit = UInt32::conditionally_select(
-        cs,
-        should_decommit,
-        &ergs_after_decommit_may_be,
-        &ergs_remaining,
-    );
-
-    if crate::config::CIRCUIT_VERSOBE {
-        if should_decommit.witness_hook(&*cs)().unwrap() {
-            dbg!(num_words_in_bytecode.witness_hook(&*cs)().unwrap());
-            dbg!(ergs_after_decommit_may_be.witness_hook(&*cs)().unwrap());
-            dbg!(ergs_remaining_after_decommit.witness_hook(&*cs)().unwrap());
-        }
-    }
 
     // decommit and return new code page and queue states
 
@@ -1530,13 +1632,75 @@ where
 
     // kind of refund if we didn't decommit
 
-    let was_decommitted_before = is_first.negated(cs);
+    let cost_of_decommittment = default_cost_of_decommittment.mask(cs, is_first);
 
-    let refund = Boolean::multi_and(cs, &[should_decommit, was_decommitted_before]);
+    let (ergs_after_decommit_may_be, uf) =
+        ergs_remaining.overflowing_sub(cs, cost_of_decommittment);
 
+    let not_enough_ergs_to_decommit = uf;
+    let have_enough_ergs_to_decommit = uf.negated(cs);
+    let should_decommit = Boolean::multi_and(cs, &[*should_decommit, have_enough_ergs_to_decommit]);
+
+    // if we do not decommit then we will eventually map into 0 page for 0 extra ergs
     let ergs_remaining_after_decommit =
-        UInt32::conditionally_select(cs, refund, &ergs_remaining, &ergs_remaining_after_decommit);
+        ergs_after_decommit_may_be.mask_negated(cs, not_enough_ergs_to_decommit);
 
+    if crate::config::CIRCUIT_VERSOBE {
+        if should_decommit.witness_hook(&*cs)().unwrap() {
+            dbg!(num_words_in_bytecode.witness_hook(&*cs)().unwrap());
+            dbg!(ergs_after_decommit_may_be.witness_hook(&*cs)().unwrap());
+            dbg!(ergs_remaining_after_decommit.witness_hook(&*cs)().unwrap());
+        }
+    }
+
+    // actually modify queue
+    let (new_decommittment_queue_tail, new_decommittment_queue_len) =
+        add_to_decommittment_queue_inner(
+            cs,
+            relations_buffer,
+            &should_decommit,
+            current_decommittment_queue_tail,
+            current_decommittment_queue_len,
+            &decommittment_request,
+            _round_function,
+        );
+
+    let target_memory_page = decommittment_request.page;
+    let unmapped_page = UInt32::allocated_constant(cs, UNMAPPED_PAGE);
+    let target_memory_page =
+        UInt32::conditionally_select(cs, should_decommit, &target_memory_page, &unmapped_page);
+
+    (
+        not_enough_ergs_to_decommit,
+        target_memory_page,
+        (new_decommittment_queue_tail, new_decommittment_queue_len),
+        ergs_remaining_after_decommit,
+    )
+}
+
+pub(crate) fn add_to_decommittment_queue_inner<
+    F: SmallField,
+    CS: ConstraintSystem<F>,
+    R: CircuitRoundFunction<F, 8, 12, 4> + AlgebraicRoundFunction<F, 8, 12, 4>,
+>(
+    cs: &mut CS,
+    relations_buffer: &mut ArrayVec<
+        (
+            Boolean<F>,
+            [Num<F>; FULL_SPONGE_QUEUE_STATE_WIDTH],
+            [Num<F>; FULL_SPONGE_QUEUE_STATE_WIDTH],
+        ),
+        MAX_SPONGES_PER_CYCLE,
+    >,
+    should_add: &Boolean<F>,
+    current_decommittment_queue_tail: &[Num<F>; FULL_SPONGE_QUEUE_STATE_WIDTH],
+    current_decommittment_queue_len: &UInt32<F>,
+    decommittment_request: &DecommitQuery<F>,
+    _round_function: &R,
+) -> ([Num<F>; FULL_SPONGE_QUEUE_STATE_WIDTH], UInt32<F>)
+where
+    [(); <DecommitQuery<F> as CSAllocatableExt<F>>::INTERNAL_STRUCT_LEN]:,
+{
     use boojum::gadgets::traits::encodable::CircuitEncodable;
 
     let encoded_request = decommittment_request.encode(cs);
@@ -1561,11 +1725,10 @@ where
     // NOTE: since we do merged call/ret, we simulate proper relations here always,
     // because we will do join enforcement on call/ret
 
-    let final_state =
-        simulate_round_function::<_, _, 8, 12, 4, R>(cs, initial_state, should_decommit);
+    let final_state = simulate_round_function::<_, _, 8, 12, 4, R>(cs, initial_state, *should_add);
 
     relations_buffer.push((
-        should_decommit,
+        *should_add,
         initial_state.map(|el| Num::from_variable(el)),
         final_state.map(|el| Num::from_variable(el)),
     ));
@@ -1574,7 +1737,7 @@ where
 
     let new_decommittment_queue_tail = Num::parallel_select(
         cs,
-        should_decommit,
+        *should_add,
         &final_state,
         &current_decommittment_queue_tail,
     );
@@ -1583,21 +1746,10 @@ where
         unsafe { current_decommittment_queue_len.increment_unchecked(cs) };
     let new_decommittment_queue_len = UInt32::conditionally_select(
         cs,
-        should_decommit,
+        *should_add,
         &new_decommittment_queue_len_candidate,
         &current_decommittment_queue_len,
     );
-    // we use `should_decommit` as a marker that we did actually execute both read and decommittment (whether fresh or not)
 
-    let target_memory_page = decommittment_request.page;
-    let unmapped_page = UInt32::allocated_constant(cs, UNMAPPED_PAGE);
-    let target_memory_page =
-        UInt32::conditionally_select(cs, should_decommit, &target_memory_page, &unmapped_page);
-
-    (
-        not_enough_ergs_to_decommit,
-        target_memory_page,
-        (new_decommittment_queue_tail, new_decommittment_queue_len),
-        ergs_remaining_after_decommit,
-    )
+    (new_decommittment_queue_tail, new_decommittment_queue_len)
 }

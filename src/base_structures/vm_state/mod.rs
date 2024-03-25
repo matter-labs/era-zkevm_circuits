@@ -27,7 +27,7 @@ use crate::base_structures::vm_state::callstack::Callstack;
 pub const FULL_SPONGE_QUEUE_STATE_WIDTH: usize = 12;
 pub const QUEUE_STATE_WIDTH: usize = 4;
 
-pub(crate) const REGISTERS_COUNT: usize = 15;
+use zkevm_opcode_defs::REGISTERS_COUNT;
 
 #[derive(Derivative, CSAllocatable, CSVarLengthEncodable, WitnessHookable)]
 #[derivative(Clone, Copy, Debug)]
@@ -99,7 +99,8 @@ pub struct VmLocalState<F: SmallField> {
     pub previous_code_page: UInt32<F>,
     pub previous_super_pc: UInt16<F>,
     pub pending_exception: Boolean<F>,
-    pub ergs_per_pubdata_byte: UInt32<F>,
+    // pub ergs_per_pubdata_byte: UInt32<F>,
+    pub pubdata_revert_counter: UInt32<F>, // actually signed
     pub callstack: Callstack<F>,
     pub memory_queue_state: [Num<F>; FULL_SPONGE_QUEUE_STATE_WIDTH],
     pub memory_queue_length: UInt32<F>,
@@ -135,7 +136,7 @@ impl<F: SmallField> VmLocalState<F> {
             previous_code_page: zero_u32,
             previous_super_pc: zero_u16,
             pending_exception: boolean_false,
-            ergs_per_pubdata_byte: zero_u32,
+            pubdata_revert_counter: zero_u32,
             callstack,
             memory_queue_state: [zero_num; FULL_SPONGE_QUEUE_STATE_WIDTH],
             memory_queue_length: zero_u32,
@@ -157,6 +158,7 @@ impl<F: SmallField> CSPlaceholder<F> for VmLocalState<F> {
 pub struct GlobalContext<F: SmallField> {
     pub zkporter_is_available: Boolean<F>,
     pub default_aa_code_hash: UInt256<F>,
+    pub evm_simulator_code_hash: UInt256<F>,
 }
 
 impl<F: SmallField> CSPlaceholder<F> for GlobalContext<F> {
@@ -166,6 +168,7 @@ impl<F: SmallField> CSPlaceholder<F> for GlobalContext<F> {
         Self {
             zkporter_is_available: boolean_false,
             default_aa_code_hash: zero_u256,
+            evm_simulator_code_hash: zero_u256,
         }
     }
 }

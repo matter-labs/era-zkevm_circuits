@@ -59,7 +59,18 @@ pub trait WitnessOracle<F: SmallField>:
         needs_witness: bool,
         execute: bool,
     ) -> U256;
-    fn get_refunds(&mut self, query: &LogQueryWitness<F>, is_write: bool, execute: bool) -> u32;
+    fn get_cold_warm_refund(
+        &mut self,
+        query: &LogQueryWitness<F>,
+        is_write: bool,
+        execute: bool,
+    ) -> u32;
+    fn get_pubdata_cost_for_query(
+        &mut self,
+        query: &LogQueryWitness<F>,
+        is_write: bool,
+        execute: bool,
+    ) -> u32;
     fn push_storage_witness(&mut self, key: &LogQueryWitness<F>, execute: bool);
     fn get_rollback_queue_witness(&mut self, key: &LogQueryWitness<F>, execute: bool) -> [F; 4];
     fn get_rollback_queue_tail_witness_for_call(&mut self, timestamp: u32, execute: bool)
@@ -117,7 +128,20 @@ impl<F: SmallField> WitnessOracle<F> for DummyOracle<F> {
     ) -> U256 {
         todo!()
     }
-    fn get_refunds(&mut self, _query: &LogQueryWitness<F>, _is_write: bool, _execute: bool) -> u32 {
+    fn get_cold_warm_refund(
+        &mut self,
+        _query: &LogQueryWitness<F>,
+        _is_write: bool,
+        _execute: bool,
+    ) -> u32 {
+        todo!()
+    }
+    fn get_pubdata_cost_for_query(
+        &mut self,
+        _query: &LogQueryWitness<F>,
+        _is_write: bool,
+        _execute: bool,
+    ) -> u32 {
         todo!()
     }
     fn push_storage_witness(&mut self, _key: &LogQueryWitness<F>, _execute: bool) {

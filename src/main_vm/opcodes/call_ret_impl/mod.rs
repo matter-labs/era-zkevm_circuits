@@ -8,8 +8,8 @@ pub mod near_call;
 pub mod ret;
 
 pub use self::far_call::*;
-pub use self::near_call::*;
-pub use self::ret::*;
+pub(crate) use self::near_call::*;
+pub(crate) use self::ret::*;
 
 #[derive(Derivative)]
 #[derivative(Clone, Copy, Debug)]

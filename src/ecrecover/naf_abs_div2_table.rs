@@ -1,9 +1,7 @@
 use super::*;
-use crate::ecrecover::{secp256k1::fr::Fr, Secp256Affine};
+
 use boojum::cs::implementations::lookup_table::LookupTable;
 use boojum::field::SmallField;
-use boojum::pairing::ff::PrimeField;
-use derivative::*;
 
 const TABLE_NAME: &'static str = "NAFABSDIV2 table";
 

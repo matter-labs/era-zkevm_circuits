@@ -1,31 +1,29 @@
-use std::collections::VecDeque;
 use std::mem::MaybeUninit;
 
 use crate::base_structures::log_query::LogQuery;
-use crate::base_structures::state_diff_record::StateDiffRecord;
+
 use crate::demux_log_queue::StorageLogQueue;
-use crate::ethereum_types::U256;
+
 use crate::fsm_input_output::circuit_inputs::INPUT_OUTPUT_COMMITMENT_LENGTH;
-use crate::keccak256_round_function::keccak256_absorb_and_run_permutation;
+
 use boojum::algebraic_props::round_function::AlgebraicRoundFunction;
-use boojum::config::*;
-use boojum::cs::traits::cs::{ConstraintSystem, DstBuffer};
-use boojum::cs::{Place, Variable};
+
+use boojum::cs::traits::cs::ConstraintSystem;
+
 use boojum::field::SmallField;
 use boojum::gadgets::boolean::Boolean;
 use boojum::gadgets::keccak256;
 use boojum::gadgets::num::Num;
 use boojum::gadgets::queue::CircuitQueueWitness;
-use boojum::gadgets::queue::QueueState;
-use boojum::gadgets::traits::allocatable::{CSAllocatable, CSAllocatableExt, CSPlaceholder};
-use boojum::gadgets::traits::castable::WitnessCastable;
+
+use boojum::gadgets::traits::allocatable::{CSAllocatableExt, CSPlaceholder};
+
 use boojum::gadgets::traits::round_function::CircuitRoundFunction;
 use boojum::gadgets::traits::selectable::Selectable;
 use boojum::gadgets::u256::UInt256;
-use boojum::gadgets::u32::UInt32;
+
 use boojum::gadgets::u8::UInt8;
-use std::sync::{Arc, RwLock};
-use zkevm_opcode_defs::system_params::STORAGE_AUX_BYTE;
+use std::sync::Arc;
 
 use super::*;
 
@@ -81,7 +79,6 @@ where
     let mut keccak_accumulator_state =
         keccak_accumulator_state.map(|el| el.map(|el| el.map(|el| el.get_variable())));
 
-    use crate::base_structures::log_query::L2_TO_L1_MESSAGE_BYTE_LENGTH;
     // we do not serialize length because it's recalculatable in L1
 
     let empty_hash = {

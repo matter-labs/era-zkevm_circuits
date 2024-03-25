@@ -8,7 +8,7 @@ use boojum::cs::{gates::*, traits::cs::ConstraintSystem};
 use boojum::field::SmallField;
 use boojum::gadgets::queue::full_state_queue::FullStateCircuitQueueWitness;
 use boojum::gadgets::traits::round_function::CircuitRoundFunction;
-use boojum::gadgets::traits::witnessable::WitnessHookable;
+
 use boojum::gadgets::{
     boolean::Boolean,
     num::Num,
@@ -17,11 +17,9 @@ use boojum::gadgets::{
     u32::UInt32,
 };
 
+use crate::base_structures::decommit_query::DecommitQuery;
 use crate::base_structures::decommit_query::{DecommitQueue, DECOMMIT_QUERY_PACKED_WIDTH};
 use crate::base_structures::vm_state::*;
-use crate::base_structures::{
-    decommit_query::DecommitQuery, memory_query::MEMORY_QUERY_PACKED_WIDTH,
-};
 use crate::fsm_input_output::{circuit_inputs::INPUT_OUTPUT_COMMITMENT_LENGTH, *};
 use crate::sort_decommittment_requests::input::*;
 use crate::storage_validity_by_grand_product::unpacked_long_comparison;
@@ -398,12 +396,10 @@ fn concatenate_key<F: SmallField, CS: ConstraintSystem<F>>(
 
 #[cfg(test)]
 mod tests {
-    use std::alloc::Global;
-
     use super::*;
     use crate::ethereum_types::U256;
     use boojum::algebraic_props::poseidon2_parameters::Poseidon2GoldilocksExternalMatrix;
-    use boojum::cs::implementations::reference_cs::CSDevelopmentAssembly;
+
     use boojum::cs::traits::gate::GatePlacementStrategy;
     use boojum::cs::CSGeometry;
     use boojum::cs::*;
@@ -529,7 +525,7 @@ mod tests {
             _,
             Poseidon2Goldilocks,
             FULL_SPONGE_QUEUE_STATE_WIDTH,
-            { MEMORY_QUERY_PACKED_WIDTH + 1 },
+            { DECOMMIT_QUERY_PACKED_WIDTH + 1 },
             DEFAULT_NUM_PERMUTATION_ARGUMENT_REPETITIONS,
         >(
             cs,
@@ -558,7 +554,7 @@ mod tests {
 
         cs.pad_and_shrink();
         let worker = Worker::new();
-        let mut owned_cs = owned_cs.into_assembly::<Global>();
+        let mut owned_cs = owned_cs.into_assembly::<std::alloc::Global>();
         owned_cs.print_gate_stats();
         assert!(owned_cs.check_if_satisfied(&worker));
     }

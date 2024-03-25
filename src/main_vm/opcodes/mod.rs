@@ -3,9 +3,7 @@ use crate::base_structures::vm_state::VmLocalState;
 use crate::main_vm::opcode_bitmask::SUPPORTED_ISA_VERSION;
 use crate::main_vm::pre_state::AfterDecodingCarryParts;
 use crate::main_vm::pre_state::CommonOpcodeState;
-use crate::main_vm::state_diffs::{
-    StateDiffsAccumulator, MAX_U32_CONDITIONAL_RANGE_CHECKS_PER_CYCLE,
-};
+use crate::main_vm::state_diffs::StateDiffsAccumulator;
 use boojum::cs::gates::U8x4FMAGate;
 use zkevm_opcode_defs::*;
 
@@ -24,16 +22,15 @@ pub mod uma;
 pub(crate) mod call_ret_impl;
 
 pub use self::add_sub::*;
-pub use self::binop::*;
-pub use self::call_ret::*;
-pub use self::context::*;
-pub use self::jump::*;
-pub use self::log::*;
+pub(crate) use self::binop::*;
+pub(crate) use self::call_ret::*;
+pub(crate) use self::context::*;
+pub(crate) use self::jump::*;
+pub(crate) use self::log::*;
 pub use self::mul_div::*;
-pub use self::nop::*;
-pub use self::ptr::*;
-pub use self::ptr::*;
-pub use self::shifts::*;
+pub(crate) use self::nop::*;
+pub(crate) use self::ptr::*;
+pub(crate) use self::shifts::*;
 pub use self::uma::*;
 
 pub struct AddSubRelation<F: SmallField> {

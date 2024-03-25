@@ -8,7 +8,6 @@ use boojum::gadgets::traits::auxiliary::PrettyComparison;
 use boojum::gadgets::u32::UInt32;
 use boojum::gadgets::{
     boolean::Boolean,
-    queue::*,
     traits::{
         allocatable::*, encodable::CircuitVarLengthEncodable, selectable::Selectable,
         witnessable::WitnessHookable,
@@ -16,7 +15,6 @@ use boojum::gadgets::{
 };
 use boojum::serde_utils::BigArraySerde;
 use cs_derive::*;
-use derivative::*;
 
 pub const PACKED_KEY_LENGTH: usize = 8 + 1;
 

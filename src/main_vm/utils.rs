@@ -6,7 +6,7 @@ use super::*;
 use crate::base_structures::memory_query::{MemoryQuery, MemoryValue};
 use crate::base_structures::register::VMRegister;
 use boojum::algebraic_props::round_function::AlgebraicRoundFunction;
-use boojum::config::*;
+
 use boojum::cs::gates::ConstantAllocatableCS;
 use boojum::gadgets::traits::encodable::CircuitEncodable;
 use boojum::gadgets::u256::UInt256;

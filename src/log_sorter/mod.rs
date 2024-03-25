@@ -470,11 +470,9 @@ pub fn prepacked_long_comparison<F: SmallField, CS: ConstraintSystem<F>>(
 
 #[cfg(test)]
 mod tests {
-    use std::alloc::Global;
-
     use super::*;
     use boojum::algebraic_props::poseidon2_parameters::Poseidon2GoldilocksExternalMatrix;
-    use boojum::cs::implementations::reference_cs::CSDevelopmentAssembly;
+
     use boojum::cs::traits::gate::GatePlacementStrategy;
     use boojum::cs::CSGeometry;
     use boojum::cs::*;
@@ -630,7 +628,7 @@ mod tests {
 
         cs.pad_and_shrink();
         let worker = Worker::new();
-        let mut owned_cs = owned_cs.into_assembly::<Global>();
+        let mut owned_cs = owned_cs.into_assembly::<std::alloc::Global>();
         owned_cs.print_gate_stats();
         assert!(owned_cs.check_if_satisfied(&worker));
     }

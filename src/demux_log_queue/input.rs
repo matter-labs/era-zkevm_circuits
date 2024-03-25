@@ -1,7 +1,10 @@
+use std::collections::HashMap;
+
 use crate::base_structures::{
     log_query::{LogQuery, LOG_QUERY_PACKED_WIDTH},
     vm_state::*,
 };
+use crate::demux_log_queue::DemuxOutput;
 use boojum::cs::{traits::cs::ConstraintSystem, Variable};
 use boojum::field::SmallField;
 use boojum::gadgets::traits::auxiliary::PrettyComparison;
@@ -13,34 +16,26 @@ use boojum::gadgets::{
         witnessable::WitnessHookable,
     },
 };
+use boojum::serde_utils::BigArraySerde;
 use cs_derive::*;
 use derivative::*;
 
-pub const NUM_OUTPUT_QUEUES: usize = 6;
+use super::NUM_DEMUX_OUTPUTS;
 
 #[derive(Derivative, CSAllocatable, CSSelectable, CSVarLengthEncodable, WitnessHookable)]
 #[derivative(Clone, Copy, Debug)]
 #[DerivePrettyComparison("true")]
 pub struct LogDemuxerFSMInputOutput<F: SmallField> {
     pub initial_log_queue_state: QueueState<F, QUEUE_STATE_WIDTH>,
-    pub storage_access_queue_state: QueueState<F, QUEUE_STATE_WIDTH>,
-    pub events_access_queue_state: QueueState<F, QUEUE_STATE_WIDTH>,
-    pub l1messages_access_queue_state: QueueState<F, QUEUE_STATE_WIDTH>,
-    pub keccak256_access_queue_state: QueueState<F, QUEUE_STATE_WIDTH>,
-    pub sha256_access_queue_state: QueueState<F, QUEUE_STATE_WIDTH>,
-    pub ecrecover_access_queue_state: QueueState<F, QUEUE_STATE_WIDTH>,
+    pub output_queue_states: [QueueState<F, QUEUE_STATE_WIDTH>; NUM_DEMUX_OUTPUTS],
 }
 
 impl<F: SmallField> CSPlaceholder<F> for LogDemuxerFSMInputOutput<F> {
     fn placeholder<CS: ConstraintSystem<F>>(cs: &mut CS) -> Self {
+        let placeholder_state = QueueState::<F, QUEUE_STATE_WIDTH>::placeholder(cs);
         Self {
-            initial_log_queue_state: QueueState::<F, QUEUE_STATE_WIDTH>::placeholder(cs),
-            storage_access_queue_state: QueueState::<F, QUEUE_STATE_WIDTH>::placeholder(cs),
-            events_access_queue_state: QueueState::<F, QUEUE_STATE_WIDTH>::placeholder(cs),
-            l1messages_access_queue_state: QueueState::<F, QUEUE_STATE_WIDTH>::placeholder(cs),
-            keccak256_access_queue_state: QueueState::<F, QUEUE_STATE_WIDTH>::placeholder(cs),
-            sha256_access_queue_state: QueueState::<F, QUEUE_STATE_WIDTH>::placeholder(cs),
-            ecrecover_access_queue_state: QueueState::<F, QUEUE_STATE_WIDTH>::placeholder(cs),
+            initial_log_queue_state: placeholder_state,
+            output_queue_states: [placeholder_state; NUM_DEMUX_OUTPUTS],
         }
     }
 }
@@ -64,37 +59,59 @@ impl<F: SmallField> CSPlaceholder<F> for LogDemuxerInputData<F> {
 #[derivative(Clone, Copy, Debug)]
 #[DerivePrettyComparison("true")]
 pub struct LogDemuxerOutputData<F: SmallField> {
-    pub storage_access_queue_state: QueueState<F, QUEUE_STATE_WIDTH>,
-    pub events_access_queue_state: QueueState<F, QUEUE_STATE_WIDTH>,
-    pub l1messages_access_queue_state: QueueState<F, QUEUE_STATE_WIDTH>,
-    pub keccak256_access_queue_state: QueueState<F, QUEUE_STATE_WIDTH>,
-    pub sha256_access_queue_state: QueueState<F, QUEUE_STATE_WIDTH>,
-    pub ecrecover_access_queue_state: QueueState<F, QUEUE_STATE_WIDTH>,
+    pub output_queue_states: [QueueState<F, QUEUE_STATE_WIDTH>; NUM_DEMUX_OUTPUTS],
 }
 
 impl<F: SmallField> CSPlaceholder<F> for LogDemuxerOutputData<F> {
     fn placeholder<CS: ConstraintSystem<F>>(cs: &mut CS) -> Self {
+        let placeholder_state = QueueState::<F, QUEUE_STATE_WIDTH>::placeholder(cs);
         Self {
-            storage_access_queue_state: QueueState::<F, QUEUE_STATE_WIDTH>::placeholder(cs),
-            events_access_queue_state: QueueState::<F, QUEUE_STATE_WIDTH>::placeholder(cs),
-            l1messages_access_queue_state: QueueState::<F, QUEUE_STATE_WIDTH>::placeholder(cs),
-            keccak256_access_queue_state: QueueState::<F, QUEUE_STATE_WIDTH>::placeholder(cs),
-            sha256_access_queue_state: QueueState::<F, QUEUE_STATE_WIDTH>::placeholder(cs),
-            ecrecover_access_queue_state: QueueState::<F, QUEUE_STATE_WIDTH>::placeholder(cs),
+            output_queue_states: [placeholder_state; NUM_DEMUX_OUTPUTS],
         }
     }
 }
 
 impl<F: SmallField> LogDemuxerOutputData<F> {
-    pub fn all_output_queues_refs(&self) -> [&QueueState<F, QUEUE_STATE_WIDTH>; NUM_OUTPUT_QUEUES] {
-        [
-            &self.storage_access_queue_state,
-            &self.keccak256_access_queue_state,
-            &self.sha256_access_queue_state,
-            &self.ecrecover_access_queue_state,
-            &self.events_access_queue_state,
-            &self.l1messages_access_queue_state,
-        ]
+    pub fn all_output_queues_refs(
+        &self,
+    ) -> HashMap<DemuxOutput, &QueueState<F, QUEUE_STATE_WIDTH>> {
+        let tuples = [
+            (
+                DemuxOutput::RollupStorage,
+                &self.output_queue_states[DemuxOutput::RollupStorage as usize],
+            ),
+            (
+                DemuxOutput::PorterStorage,
+                &self.output_queue_states[DemuxOutput::PorterStorage as usize],
+            ),
+            (
+                DemuxOutput::Events,
+                &self.output_queue_states[DemuxOutput::Events as usize],
+            ),
+            (
+                DemuxOutput::L2ToL1Messages,
+                &self.output_queue_states[DemuxOutput::L2ToL1Messages as usize],
+            ),
+            (
+                DemuxOutput::Keccak,
+                &self.output_queue_states[DemuxOutput::Keccak as usize],
+            ),
+            (
+                DemuxOutput::Sha256,
+                &self.output_queue_states[DemuxOutput::Sha256 as usize],
+            ),
+            (
+                DemuxOutput::ECRecover,
+                &self.output_queue_states[DemuxOutput::ECRecover as usize],
+            ),
+            (
+                DemuxOutput::Secp256r1Verify,
+                &self.output_queue_states[DemuxOutput::Secp256r1Verify as usize],
+            ),
+        ];
+        assert_eq!(tuples.len(), NUM_DEMUX_OUTPUTS);
+
+        HashMap::from_iter(tuples.into_iter())
     }
 }
 

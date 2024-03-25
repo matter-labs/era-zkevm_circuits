@@ -41,6 +41,10 @@ pub(crate) fn apply_uma<
         zkevm_opcode_defs::Opcode::UMA(UMAOpcode::AuxHeapWrite);
     const UMA_FAT_PTR_READ_OPCODE: zkevm_opcode_defs::Opcode =
         zkevm_opcode_defs::Opcode::UMA(UMAOpcode::FatPointerRead);
+    const UMA_STATIC_MEMORY_READ_OPCODE: zkevm_opcode_defs::Opcode =
+        zkevm_opcode_defs::Opcode::UMA(UMAOpcode::StaticMemoryRead);
+    const UMA_STATIC_MEMORY_WRITE_OPCODE: zkevm_opcode_defs::Opcode =
+        zkevm_opcode_defs::Opcode::UMA(UMAOpcode::StaticMemoryWrite);
 
     let should_apply = common_opcode_state
         .decoded_opcode
@@ -67,6 +71,14 @@ pub(crate) fn apply_uma<
         .decoded_opcode
         .properties_bits
         .boolean_for_variant(UMA_FAT_PTR_READ_OPCODE);
+    let is_uma_static_memory_read = common_opcode_state
+        .decoded_opcode
+        .properties_bits
+        .boolean_for_variant(UMA_AUX_HEAP_READ_OPCODE);
+    let is_uma_static_memory_write = common_opcode_state
+        .decoded_opcode
+        .properties_bits
+        .boolean_for_variant(UMA_AUX_HEAP_WRITE_OPCODE);
 
     let increment_offset = common_opcode_state
         .decoded_opcode
@@ -75,6 +87,8 @@ pub(crate) fn apply_uma<
 
     let access_heap = Boolean::multi_or(cs, &[is_uma_heap_read, is_uma_heap_write]);
     let access_aux_heap = Boolean::multi_or(cs, &[is_uma_aux_heap_read, is_uma_aux_heap_write]);
+    let access_static_page =
+        Boolean::multi_or(cs, &[is_uma_static_memory_read, is_uma_static_memory_write]);
 
     if crate::config::CIRCUIT_VERSOBE {
         if should_apply.witness_hook(&*cs)().unwrap_or(false) {
@@ -93,6 +107,12 @@ pub(crate) fn apply_uma<
             }
             if is_uma_fat_ptr_read.witness_hook(&*cs)().unwrap_or(false) {
                 println!("Fat ptr read");
+            }
+            if is_uma_static_memory_read.witness_hook(&*cs)().unwrap_or(false) {
+                println!("Static memory read");
+            }
+            if is_uma_static_memory_write.witness_hook(&*cs)().unwrap_or(false) {
+                println!("Static memory write");
             }
         }
     }
@@ -215,9 +235,21 @@ pub(crate) fn apply_uma<
 
     let is_read_access = Boolean::multi_or(
         cs,
-        &[is_uma_heap_read, is_uma_aux_heap_read, is_uma_fat_ptr_read],
+        &[
+            is_uma_heap_read,
+            is_uma_aux_heap_read,
+            is_uma_fat_ptr_read,
+            is_uma_static_memory_read,
+        ],
     );
-    let is_write_access = Boolean::multi_or(cs, &[is_uma_heap_write, is_uma_aux_heap_write]);
+    let is_write_access = Boolean::multi_or(
+        cs,
+        &[
+            is_uma_heap_write,
+            is_uma_aux_heap_write,
+            is_uma_static_memory_write,
+        ],
+    );
 
     // NB: Etherium virtual machine is big endian;
     // we need to determine the memory cells' indexes which will be accessed
@@ -247,7 +279,11 @@ pub(crate) fn apply_uma<
     let current_memory_queue_state = draft_vm_state.memory_queue_state;
     let current_memory_queue_length = draft_vm_state.memory_queue_length;
 
+    let static_memory_page_index = UInt32::allocated_constant(cs, STATIC_MEMORY_PAGE);
+
     let mut mem_page = quasi_fat_ptr.page_candidate;
+    mem_page =
+        UInt32::conditionally_select(cs, access_static_page, &static_memory_page_index, &mem_page);
     mem_page =
         UInt32::conditionally_select(cs, access_heap, &opcode_carry_parts.heap_page, &mem_page);
     mem_page = UInt32::conditionally_select(

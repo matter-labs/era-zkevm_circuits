@@ -1,11 +1,10 @@
 use super::*;
-use crate::base_structures::log_query::*;
-use crate::base_structures::memory_query::*;
+
 use crate::base_structures::precompile_input_outputs::PrecompileFunctionOutputData;
 use crate::demux_log_queue::StorageLogQueue;
 use crate::ethereum_types::U256;
 use crate::fsm_input_output::circuit_inputs::INPUT_OUTPUT_COMMITMENT_LENGTH;
-use crate::fsm_input_output::*;
+
 use arrayvec::ArrayVec;
 use boojum::algebraic_props::round_function::AlgebraicRoundFunction;
 use boojum::crypto_bigint::{Zero, U1024};
@@ -15,27 +14,25 @@ use boojum::field::SmallField;
 use boojum::gadgets::boolean::Boolean;
 use boojum::gadgets::curves::sw_projective::SWProjectivePoint;
 use boojum::gadgets::keccak256::keccak256;
-use boojum::gadgets::non_native_field::implementations::*;
+
 use boojum::gadgets::num::Num;
 use boojum::gadgets::queue::CircuitQueueWitness;
 use boojum::gadgets::queue::QueueState;
 use boojum::gadgets::traits::allocatable::{CSAllocatableExt, CSPlaceholder};
 use boojum::gadgets::traits::round_function::CircuitRoundFunction;
 use boojum::gadgets::traits::selectable::Selectable;
-use boojum::gadgets::traits::witnessable::WitnessHookable;
+
 use boojum::gadgets::u16::UInt16;
 use boojum::gadgets::u160::UInt160;
 use boojum::gadgets::u256::UInt256;
 use boojum::gadgets::u32::UInt32;
 use boojum::gadgets::u8::UInt8;
-use cs_derive::*;
+
 use std::collections::VecDeque;
 use std::sync::{Arc, RwLock};
 use zkevm_opcode_defs::system_params::PRECOMPILE_AUX_BYTE;
 
 pub const MEMORY_QUERIES_PER_CALL: usize = 4;
-
-use super::input::*;
 
 #[derive(Derivative, CSSelectable)]
 #[derivative(Clone, Debug)]
@@ -83,7 +80,7 @@ const VALID_X_CUBED_IN_EXTERNAL_FIELD: u64 = 9;
 
 // assume that constructed field element is not zero
 // if this is not satisfied - set the result to be F::one
-fn convert_uint256_to_field_element_masked<
+pub(crate) fn convert_uint256_to_field_element_masked<
     F: SmallField,
     CS: ConstraintSystem<F>,
     P: boojum::pairing::ff::PrimeField,
@@ -135,7 +132,7 @@ where
     (selected, is_zero)
 }
 
-fn convert_uint256_to_field_element<
+pub(crate) fn convert_uint256_to_field_element<
     F: SmallField,
     CS: ConstraintSystem<F>,
     P: boojum::pairing::ff::PrimeField,
@@ -675,11 +672,9 @@ where
 
 #[cfg(test)]
 mod test {
-    use std::alloc::Global;
-
     use boojum::field::goldilocks::GoldilocksField;
     use boojum::gadgets::traits::allocatable::CSAllocatable;
-    use boojum::pairing::ff::{Field, PrimeField, SqrtField};
+    use boojum::pairing::ff::{Field, PrimeField};
     use boojum::worker::Worker;
 
     use super::*;
@@ -778,6 +773,7 @@ mod test {
             num_constant_columns: 8,
             max_allowed_constraint_degree: 4,
         };
+        let max_variables = 1 << 26;
         let max_trace_len = 1 << 20;
 
         fn configure<
@@ -847,7 +843,7 @@ mod test {
         let builder = new_builder::<_, F>(builder_impl);
 
         let builder = configure(builder);
-        let mut owned_cs = builder.build(1 << 26);
+        let mut owned_cs = builder.build(max_variables);
 
         // add tables
         let table = create_xor8_table();
@@ -927,7 +923,7 @@ mod test {
 
         cs.pad_and_shrink();
 
-        let mut cs = owned_cs.into_assembly::<Global>();
+        let mut cs = owned_cs.into_assembly::<std::alloc::Global>();
         cs.print_gate_stats();
         let worker = Worker::new();
         assert!(cs.check_if_satisfied(&worker));

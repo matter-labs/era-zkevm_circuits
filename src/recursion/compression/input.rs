@@ -6,7 +6,6 @@ use boojum::field::SmallField;
 use boojum::gadgets::num::Num;
 use boojum::gadgets::recursion::recursive_tree_hasher::RecursiveTreeHasher;
 use boojum::gadgets::traits::allocatable::CSAllocatable;
-use std::collections::VecDeque;
 
 #[derive(Derivative, serde::Serialize, serde::Deserialize)]
 #[derivative(Clone, Debug, Default(bound = ""))]

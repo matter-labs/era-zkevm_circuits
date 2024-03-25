@@ -24,6 +24,7 @@ pub(crate) struct RetData<F: SmallField> {
     pub(crate) specific_registers_updates: [Option<(Boolean<F>, VMRegister<F>)>; REGISTERS_COUNT],
     pub(crate) specific_registers_zeroing: [Option<Boolean<F>>; REGISTERS_COUNT],
     pub(crate) remove_ptr_on_specific_registers: [Option<Boolean<F>>; REGISTERS_COUNT],
+    pub(crate) new_pubdata_revert_counter: UInt32<F>,
 }
 
 pub(crate) fn callstack_candidate_for_ret<
@@ -76,6 +77,12 @@ where
         .current_context
         .saved_context
         .is_local_call;
+
+    let is_kernel_frame = draft_vm_state
+        .callstack
+        .current_context
+        .saved_context
+        .is_kernel_mode;
 
     if crate::config::CIRCUIT_VERSOBE {
         if execute.witness_hook(&*cs)().unwrap_or(false) {
@@ -173,9 +180,10 @@ where
     // resolve some exceptions over fat pointer use and memory growth
 
     // exceptions that are specific only to return from non-local frame
-    let mut non_local_frame_exceptions = ArrayVec::<Boolean<F>, 4>::new();
+    let mut non_local_frame_exceptions = ArrayVec::<Boolean<F>, 5>::new();
 
     let forward_fat_pointer = forwarding_data.forward_fat_pointer;
+    let do_not_forward_ptr = forward_fat_pointer.negated(cs);
     let src0_is_integer = src0.is_pointer.negated(cs);
     let is_far_return = is_local_frame.negated(cs);
 
@@ -183,8 +191,10 @@ where
     let fat_ptr_expected_exception =
         Boolean::multi_and(cs, &[forward_fat_pointer, src0_is_integer, is_far_return]);
     non_local_frame_exceptions.push(fat_ptr_expected_exception);
-
-    let do_not_forward_ptr = forward_fat_pointer.negated(cs);
+    // symmetric otherwise
+    let non_pointer_expected_exception =
+        Boolean::multi_and(cs, &[do_not_forward_ptr, src0.is_pointer, is_far_return]);
+    non_local_frame_exceptions.push(non_pointer_expected_exception);
 
     // we also want unidirectional movement of returndata
     // check if fat_ptr.memory_page < ctx.base_page and throw if it's the case
@@ -197,8 +207,10 @@ where
             .base_page,
     );
 
-    // if we try to forward then we should be unidirectional
-    let non_unidirectional_forwarding = Boolean::multi_and(cs, &[forward_fat_pointer, uf]);
+    // if we try to forward then we should be unidirectional, unless kernel knows what it's doing
+    let is_usermode = is_kernel_frame.negated(cs);
+    let non_unidirectional_forwarding =
+        Boolean::multi_and(cs, &[forward_fat_pointer, uf, is_usermode]);
 
     non_local_frame_exceptions.push(non_unidirectional_forwarding);
 
@@ -270,7 +282,6 @@ where
     growth_cost = UInt32::conditionally_select(cs, grow_aux_heap, &aux_heap_growth, &growth_cost);
 
     // subtract
-
     let (ergs_left_after_growth, uf) = preliminary_ergs_left.overflowing_sub(cs, growth_cost);
 
     let mut non_local_frame_exceptions = ArrayVec::<Boolean<F>, 4>::new();
@@ -461,6 +472,52 @@ where
         erase_ptr_markers[reg_idx as usize] = Some(update_specific_registers_on_ret);
     }
 
+    if crate::config::CIRCUIT_VERSOBE {
+        if execute.witness_hook(cs)().unwrap() {
+            dbg!(current_callstack_entry.total_pubdata_spent.witness_hook(cs)().unwrap());
+            dbg!(originally_popped_context
+                .total_pubdata_spent
+                .witness_hook(cs)()
+            .unwrap());
+            dbg!(draft_vm_state.pubdata_revert_counter.witness_hook(cs)().unwrap());
+        }
+    }
+
+    // update pubdata counter in parent frame. If we panic - we do not add, otherwise add
+    let new_callstack_pubdata_if_ok = i32_add_no_overflow(
+        cs,
+        &originally_popped_context.total_pubdata_spent,
+        &current_callstack_entry.total_pubdata_spent,
+    );
+    let new_callstack_pubdata_if_revert = originally_popped_context.total_pubdata_spent;
+    new_callstack_entry.total_pubdata_spent = UInt32::conditionally_select(
+        cs,
+        perform_revert,
+        &new_callstack_pubdata_if_revert,
+        &new_callstack_pubdata_if_ok,
+    );
+
+    // update global counter. If we revert - we subtract (no underflow)
+    let pubdata_revert_counter_if_ok = draft_vm_state.pubdata_revert_counter;
+    let pubdata_revert_counter_if_revert = i32_sub_no_underflow(
+        cs,
+        &draft_vm_state.pubdata_revert_counter,
+        &current_callstack_entry.total_pubdata_spent,
+    );
+    let new_pubdata_revert_counter = UInt32::conditionally_select(
+        cs,
+        perform_revert,
+        &pubdata_revert_counter_if_revert,
+        &pubdata_revert_counter_if_ok,
+    );
+
+    if crate::config::CIRCUIT_VERSOBE {
+        if execute.witness_hook(cs)().unwrap() {
+            dbg!(new_callstack_entry.total_pubdata_spent.witness_hook(cs)().unwrap());
+            dbg!(new_pubdata_revert_counter.witness_hook(cs)().unwrap());
+        }
+    }
+
     let full_data = RetData {
         apply_ret: execute,
         is_panic: is_panic,
@@ -473,6 +530,7 @@ where
         specific_registers_updates,
         specific_registers_zeroing: register_zero_out,
         remove_ptr_on_specific_registers: erase_ptr_markers,
+        new_pubdata_revert_counter: new_pubdata_revert_counter,
     };
 
     full_data

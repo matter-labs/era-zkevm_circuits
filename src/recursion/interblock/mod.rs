@@ -6,9 +6,7 @@ pub use self::input::*;
 pub mod keccak_aggregator;
 
 use crate::fsm_input_output::circuit_inputs::INPUT_OUTPUT_COMMITMENT_LENGTH;
-use boojum::algebraic_props::round_function::AlgebraicRoundFunction;
-use boojum::config::*;
-use boojum::cs::implementations::proof::Proof;
+
 use boojum::cs::implementations::prover::ProofConfig;
 use boojum::cs::implementations::verifier::VerificationKey;
 use boojum::cs::oracle::TreeHasher;
@@ -24,7 +22,6 @@ use boojum::gadgets::recursion::circuit_pow::RecursivePoWRunner;
 use boojum::gadgets::recursion::recursive_transcript::*;
 use boojum::gadgets::recursion::recursive_tree_hasher::*;
 use boojum::gadgets::traits::allocatable::CSAllocatable;
-use boojum::gadgets::traits::round_function::CircuitRoundFunction;
 
 // performs recursion between "independent" units for FIXED verification key
 

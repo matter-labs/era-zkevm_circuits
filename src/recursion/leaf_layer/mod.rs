@@ -1,6 +1,6 @@
 use crate::base_structures::recursion_query::{RecursionQuery, RecursionQueue};
 use crate::fsm_input_output::commit_variable_length_encodable_item;
-use boojum::cs::implementations::proof::Proof;
+
 use boojum::cs::implementations::prover::ProofConfig;
 use boojum::gadgets::recursion::allocated_proof::AllocatedProof;
 use boojum::gadgets::recursion::allocated_vk::AllocatedVerificationKey;
@@ -12,9 +12,9 @@ use std::sync::Arc;
 
 use crate::fsm_input_output::circuit_inputs::INPUT_OUTPUT_COMMITMENT_LENGTH;
 use boojum::algebraic_props::round_function::AlgebraicRoundFunction;
-use boojum::config::*;
+
 use boojum::cs::traits::circuit::ErasedBuilderForRecursiveVerifier;
-use boojum::cs::{gates::*, traits::cs::ConstraintSystem};
+use boojum::cs::traits::cs::ConstraintSystem;
 use boojum::field::SmallField;
 use boojum::gadgets::queue::full_state_queue::FullStateCircuitQueueWitness;
 use boojum::gadgets::traits::round_function::CircuitRoundFunction;
@@ -135,17 +135,9 @@ where
         ..
     } = config;
 
-    // use this and deal with borrow checker
-
-    let r = cs as *mut CS;
-
     assert_eq!(vk_fixed_parameters.parameters, verifier_builder.geometry());
 
     let verifier = verifier_builder.create_recursive_verifier(cs);
-
-    drop(cs);
-
-    let cs = unsafe { &mut *r };
 
     for _ in 0..capacity {
         let proof_witness = proof_witnesses.pop_front();

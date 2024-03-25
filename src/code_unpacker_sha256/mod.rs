@@ -3,10 +3,14 @@ pub mod input;
 use input::*;
 
 use crate::ethereum_types::U256;
+use boojum::config::*;
+use boojum::cs::traits::cs::DstBuffer;
+use boojum::cs::Place;
+use boojum::cs::Variable;
+use boojum::gadgets::traits::castable::WitnessCastable;
 use std::collections::VecDeque;
 use std::sync::{Arc, RwLock};
 
-use crate::base_structures::vm_state::FULL_SPONGE_QUEUE_STATE_WIDTH;
 use crate::base_structures::{decommit_query::*, memory_query::*};
 use boojum::algebraic_props::round_function::AlgebraicRoundFunction;
 use boojum::cs::{gates::*, traits::cs::ConstraintSystem};
@@ -28,7 +32,217 @@ use boojum::gadgets::{
 
 use crate::fsm_input_output::{circuit_inputs::INPUT_OUTPUT_COMMITMENT_LENGTH, *};
 
-use crate::storage_application::ConditionalWitnessAllocator;
+// Similar to ConditionalWitnessAllocator, but has a logical separation of sequences,
+// so if a sub-sequence ended it can also allocate a boolean to indicate it by providing boolean value
+pub struct ConditionalWitnessSetAllocator<F: SmallField, EL: CSAllocatableExt<F>> {
+    witness_source: Arc<RwLock<VecDeque<VecDeque<EL::Witness>>>>,
+}
+
+impl<F: SmallField, EL: CSAllocatableExt<F>> ConditionalWitnessSetAllocator<F, EL>
+where
+    [(); EL::INTERNAL_STRUCT_LEN]:,
+    [(); EL::INTERNAL_STRUCT_LEN + 1]:,
+{
+    pub fn new(
+        mut sequences: VecDeque<VecDeque<EL::Witness>>,
+        first_subsequence_is_continuation: bool,
+    ) -> Self {
+        if first_subsequence_is_continuation == false {
+            // we would need to pre-pad to avoid tracking skipping first "start new sequence"
+            sequences.push_front(VecDeque::new());
+        }
+
+        Self {
+            witness_source: Arc::new(RwLock::new(sequences)),
+        }
+    }
+
+    pub fn new_uninterpreted(sequences: VecDeque<VecDeque<EL::Witness>>) -> Self {
+        Self {
+            witness_source: Arc::new(RwLock::new(sequences)),
+        }
+    }
+
+    pub fn print_debug_info(&self) {
+        if let Ok(read_lock) = self.witness_source.read() {
+            let inner = &*read_lock;
+            dbg!(inner.len());
+        }
+    }
+
+    pub fn conditionally_allocate_with_default<
+        CS: ConstraintSystem<F>,
+        DEF: FnOnce() -> EL::Witness + 'static + Send + Sync,
+    >(
+        &self,
+        cs: &mut CS,
+        should_allocate: Boolean<F>,
+        should_start_new: Boolean<F>,
+        default_values_closure: DEF,
+    ) -> (Boolean<F>, EL) {
+        let sequence_is_empty = Boolean::allocate_without_value(cs);
+        let el = EL::allocate_without_value(cs);
+
+        if <CS::Config as CSConfig>::WitnessConfig::EVALUATE_WITNESS {
+            let dependencies = [
+                should_allocate.get_variable().into(),
+                should_start_new.get_variable().into(),
+            ];
+            let witness = self.witness_source.clone();
+            let value_fn = move |inputs: [F; 2]| {
+                let should_allocate = <bool as WitnessCastable<F, F>>::cast_from_source(inputs[0]);
+                let should_start_new = <bool as WitnessCastable<F, F>>::cast_from_source(inputs[1]);
+
+                let (sequence_is_empty, witness) = if should_allocate == true {
+                    let mut guard = witness.write().expect("not poisoned");
+                    if should_start_new == true {
+                        // pop the previous sequence
+                        let previous_sequence = guard
+                            .pop_front()
+                            .expect("not empty witness should have previous sequence");
+                        assert!(
+                            previous_sequence.is_empty(),
+                            "if we start new we must have previous sequence completed"
+                        );
+                    }
+                    let sequence = guard.get_mut(0).expect("not empty witness");
+                    if let Some(witness_element) = sequence.pop_front() {
+                        (false, witness_element)
+                    } else {
+                        (true, (default_values_closure)())
+                    }
+                } else {
+                    let witness_element = (default_values_closure)();
+
+                    // can return anything for witness, and we decide that we return `false`
+                    (false, witness_element)
+                };
+
+                let mut result = [F::ZERO; EL::INTERNAL_STRUCT_LEN + 1];
+                result[0] = <bool as WitnessCastable<F, F>>::cast_into_source(sequence_is_empty);
+                let mut dst = DstBuffer::MutSlice(&mut result[1..], 0);
+                EL::set_internal_variables_values(witness, &mut dst);
+                drop(dst);
+
+                result
+            };
+
+            let mut outputs = [Variable::placeholder(); EL::INTERNAL_STRUCT_LEN + 1];
+            outputs[0] = sequence_is_empty.get_variable();
+            outputs[1..].copy_from_slice(&el.flatten_as_variables());
+
+            let outputs = Place::from_variables(outputs);
+
+            cs.set_values_with_dependencies(&dependencies, &outputs, value_fn);
+        }
+
+        (sequence_is_empty, el)
+    }
+
+    pub fn conditionally_allocate_with_default_biased<
+        CS: ConstraintSystem<F>,
+        DEF: FnOnce() -> EL::Witness + 'static + Send + Sync,
+    >(
+        &self,
+        cs: &mut CS,
+        should_allocate: Boolean<F>,
+        should_start_new: Boolean<F>,
+        bias: Variable, // any variable that has to be resolved BEFORE executing witness query
+        default_values_closure: DEF,
+    ) -> (Boolean<F>, EL) {
+        let sequence_is_empty = Boolean::allocate_without_value(cs);
+        let el = EL::allocate_without_value(cs);
+
+        if <CS::Config as CSConfig>::WitnessConfig::EVALUATE_WITNESS {
+            let dependencies = [
+                should_allocate.get_variable().into(),
+                should_start_new.get_variable().into(),
+                bias.into(),
+            ];
+            let witness = self.witness_source.clone();
+            let value_fn = move |inputs: [F; 3]| {
+                let should_allocate = <bool as WitnessCastable<F, F>>::cast_from_source(inputs[0]);
+                let should_start_new = <bool as WitnessCastable<F, F>>::cast_from_source(inputs[1]);
+
+                let (sequence_is_empty, witness) = if should_allocate == true {
+                    let mut guard = witness.write().expect("not poisoned");
+                    if should_start_new == true {
+                        // pop the previous sequence
+                        let previous_sequence = guard
+                            .pop_front()
+                            .expect("not empty witness should have previous sequence");
+                        assert!(
+                            previous_sequence.is_empty(),
+                            "if we start new we must have previous sequence completed"
+                        );
+                    }
+                    let sequence = guard.get_mut(0).expect("not empty witness");
+                    if let Some(witness_element) = sequence.pop_front() {
+                        (false, witness_element)
+                    } else {
+                        (true, (default_values_closure)())
+                    }
+                } else {
+                    let witness_element = (default_values_closure)();
+
+                    // can return anything for witness, and we decide that we return `false`
+                    (false, witness_element)
+                };
+
+                let mut result = [F::ZERO; EL::INTERNAL_STRUCT_LEN + 1];
+                result[0] = <bool as WitnessCastable<F, F>>::cast_into_source(sequence_is_empty);
+                let mut dst = DstBuffer::MutSlice(&mut result[1..], 0);
+                EL::set_internal_variables_values(witness, &mut dst);
+                drop(dst);
+
+                result
+            };
+
+            let mut outputs = [Variable::placeholder(); EL::INTERNAL_STRUCT_LEN + 1];
+            outputs[0] = sequence_is_empty.get_variable();
+            outputs[1..].copy_from_slice(&el.flatten_as_variables());
+
+            let outputs = Place::from_variables(outputs);
+
+            cs.set_values_with_dependencies(&dependencies, &outputs, value_fn);
+        }
+
+        (sequence_is_empty, el)
+    }
+
+    pub fn conditionally_allocate<CS: ConstraintSystem<F>>(
+        &self,
+        cs: &mut CS,
+        should_allocate: Boolean<F>,
+        should_start_new: Boolean<F>,
+    ) -> (Boolean<F>, EL)
+    where
+        EL::Witness: Default,
+    {
+        self.conditionally_allocate_with_default(cs, should_allocate, should_start_new, || {
+            std::default::Default::default()
+        })
+    }
+
+    pub fn conditionally_allocate_biased<CS: ConstraintSystem<F>>(
+        &self,
+        cs: &mut CS,
+        should_allocate: Boolean<F>,
+        should_start_new: Boolean<F>,
+        bias: Variable, // any variable that has to be resolved BEFORE executing witness query
+    ) -> (Boolean<F>, EL)
+    where
+        EL::Witness: Default,
+    {
+        self.conditionally_allocate_with_default_biased(
+            cs,
+            should_allocate,
+            should_start_new,
+            bias,
+            || std::default::Default::default(),
+        )
+    }
+}
 
 pub fn unpack_code_into_memory_entry_point<
     F: SmallField,
@@ -52,7 +266,21 @@ where
         code_words,
     } = witness;
 
-    let code_words: VecDeque<U256> = code_words.into_iter().flatten().collect();
+    // we result on the FSM input trick here to add pre-padding
+    let first_sequence_is_a_continuation = closed_form_input.start_flag == false
+        && closed_form_input
+            .hidden_fsm_input
+            .internal_fsm
+            .state_get_from_queue
+            == false;
+    let code_words: VecDeque<VecDeque<U256>> = code_words
+        .into_iter()
+        .map(|el| VecDeque::from(el))
+        .collect();
+    let code_words_allocator = ConditionalWitnessSetAllocator::<F, UInt256<F>>::new(
+        code_words,
+        first_sequence_is_a_continuation,
+    );
 
     let mut structured_input =
         CodeDecommitterCycleInputOutput::alloc_ignoring_outputs(cs, closed_form_input.clone());
@@ -94,10 +322,6 @@ where
         &starting_fsm_state,
         &structured_input.hidden_fsm_input.internal_fsm,
     );
-
-    let code_words_allocator = ConditionalWitnessAllocator::<F, UInt256<F>> {
-        witness_source: Arc::new(RwLock::new(code_words)),
-    };
 
     let final_state = unpack_code_into_memory_inner(
         cs,
@@ -156,7 +380,7 @@ pub fn unpack_code_into_memory_inner<
     memory_queue: &mut MemoryQueue<F, R>,
     unpack_requests_queue: &mut DecommitQueue<F, R>,
     initial_state: CodeDecommittmentFSM<F>,
-    code_word_witness: ConditionalWitnessAllocator<F, UInt256<F>>,
+    code_word_witness: ConditionalWitnessSetAllocator<F, UInt256<F>>,
     _round_function: &R,
     limit: usize,
 ) -> CodeDecommittmentFSM<F>
@@ -168,15 +392,7 @@ where
 {
     assert!(limit <= u32::MAX as usize);
 
-    // const POP_QUEUE_OR_WRITE_ID: u64 = 0;
-    // const FINALIZE_SHA256: u64 = 1;
-
     let mut state = initial_state;
-
-    let mut half = F::ONE;
-    half.double();
-    half = half.inverse().unwrap();
-    let half_num = Num::allocated_constant(cs, half);
 
     let words_to_bits = UInt32::allocated_constant(cs, 32 * 8);
 
@@ -184,67 +400,33 @@ where
 
     let boolean_false = Boolean::allocated_constant(cs, false);
     let boolean_true = Boolean::allocated_constant(cs, true);
-
+    let zero_u16 = UInt16::zero(cs);
+    let one_u16 = UInt16::allocated_constant(cs, 1u16);
     let zero_u32 = UInt32::zero(cs);
-
-    use zkevm_opcode_defs::VersionedHashDef;
-    let versioned_hash_top_16_bits =
-        (zkevm_opcode_defs::versioned_hash::ContractCodeSha256::VERSION_BYTE as u16) << 8;
-    let versioned_hash_top_16_bits = UInt16::allocated_constant(cs, versioned_hash_top_16_bits);
 
     for _cycle in 0..limit {
         // we need exactly 3 sponges per cycle:
-        // - two memory reads when we work on the existing decommittment
+        // - two memory write when we work on the existing decommittment
         // - and may be queue pop before it
         let (may_be_new_request, _) =
             unpack_requests_queue.pop_front(cs, state.state_get_from_queue);
 
         let hash = may_be_new_request.code_hash;
-
-        let chunks = decompose_uint32_to_uint16s(cs, &hash.inner[7]);
-
-        let version_hash_matches = UInt16::equals(cs, &chunks[1], &versioned_hash_top_16_bits);
-        // if we did get a fresh request from queue we expect it with a proper version bytes
-        version_hash_matches.conditionally_enforce_true(cs, state.state_get_from_queue);
-
-        let uint_16_one = UInt16::allocated_constant(cs, 1);
-        let length_in_words = chunks[0];
-        let length_in_words = UInt16::conditionally_select(
-            cs,
-            state.state_get_from_queue,
-            &length_in_words,
-            &uint_16_one,
-        );
-
-        let length_in_rounds = unsafe { length_in_words.increment_unchecked(cs) };
-
-        let length_in_rounds = length_in_rounds.into_num().mul(cs, &half_num);
-        // length is always a multiple of 2 since we decided so
-
-        let length_in_rounds = UInt16::from_variable_checked(cs, length_in_rounds.get_variable());
-
-        let length_in_bits_may_be = unsafe {
-            UInt32::from_variable_unchecked(length_in_words.get_variable())
-                .non_widening_mul(cs, &words_to_bits)
-        };
+        // we know that if we pop then highest 32 bits are 0 by how VM constructs a queue
+        let highest_word_is_zero = hash.inner[7].is_zero(cs);
+        // if we did get a fresh request from queue we expect it to follow our convention
+        highest_word_is_zero.conditionally_enforce_true(cs, state.state_get_from_queue);
 
         // turn over the endianess
         // we IGNORE the highest 4 bytes
-        let uint32_zero = UInt32::allocated_constant(cs, 0);
         let mut cutted_hash = hash;
-        cutted_hash.inner[7] = uint32_zero;
+        cutted_hash.inner[7] = zero_u32;
 
-        state.num_rounds_left = UInt16::conditionally_select(
+        state.num_byte32_words_processed = UInt16::conditionally_select(
             cs,
             state.state_get_from_queue,
-            &length_in_rounds,
-            &state.num_rounds_left,
-        );
-        state.length_in_bits = UInt32::conditionally_select(
-            cs,
-            state.state_get_from_queue,
-            &length_in_bits_may_be,
-            &state.length_in_bits,
+            &zero_u16,
+            &state.num_byte32_words_processed,
         );
         state.timestamp = UInt32::conditionally_select(
             cs,
@@ -267,7 +449,7 @@ where
         state.current_index = UInt32::conditionally_select(
             cs,
             state.state_get_from_queue,
-            &uint32_zero,
+            &zero_u32,
             &state.current_index,
         );
         state.sha256_inner_state = <[UInt32<F>; 8]>::conditionally_select(
@@ -278,34 +460,49 @@ where
         );
 
         // we decommit if we either decommit or just got a new request
+        let start_new_sequence = state.state_get_from_queue;
         state.state_decommit = state.state_decommit.or(cs, state.state_get_from_queue);
         state.state_get_from_queue = boolean_false;
 
-        // even though it's not that useful, we will do it in a checked way for ease of witness
-        let may_be_num_rounds_left = unsafe { state.num_rounds_left.decrement_unchecked(cs) };
-        state.num_rounds_left = UInt16::conditionally_select(
+        // let's just pull words from witness. We know that first word is never empty if we decommit
+        let (witness_0_was_empty, code_word_0) =
+            code_word_witness.conditionally_allocate(cs, state.state_decommit, start_new_sequence);
+        witness_0_was_empty.conditionally_enforce_false(cs, state.state_decommit);
+        let code_word_0_be_bytes = code_word_0.to_be_bytes(cs);
+        let new_num_byte32_words_processed = state
+            .num_byte32_words_processed
+            .add_no_overflow(cs, one_u16);
+        state.num_byte32_words_processed = UInt16::conditionally_select(
             cs,
             state.state_decommit,
-            &may_be_num_rounds_left,
-            &state.num_rounds_left,
+            &new_num_byte32_words_processed,
+            &state.num_byte32_words_processed,
         );
 
-        let last_round = state.num_rounds_left.is_zero(cs);
+        // NOTE: we have to enforce a sequence of access to witness, so we always wait for code_word_0 to be resolved
+        let (witness_1_was_empty, code_word_1) = code_word_witness.conditionally_allocate_biased(
+            cs,
+            state.state_decommit,
+            boolean_false,
+            code_word_0.inner[0].get_variable(),
+        );
+        let code_word_1_be_bytes = code_word_1.to_be_bytes(cs);
+
+        // if witness_1 wasn't in a circuit witness we conclude that it's the end of hash and perform finalization
+        let last_round = witness_1_was_empty;
         let finalize = last_round.and(cs, state.state_decommit);
         let not_last_round = last_round.negated(cs);
         let process_second_word = not_last_round.and(cs, state.state_decommit);
 
-        // we either pop from the queue, or absorb-decommit, or finalize hash
-        let code_word_0 = code_word_witness.conditionally_allocate(cs, state.state_decommit);
-        let code_word_0_be_bytes = code_word_0.to_be_bytes(cs);
-
-        // NOTE: we have to enforce a sequence of access to witness, so we always wait for code_word_0 to be resolved
-        let code_word_1 = code_word_witness.conditionally_allocate_biased(
+        let new_num_byte32_words_processed = state
+            .num_byte32_words_processed
+            .add_no_overflow(cs, one_u16);
+        state.num_byte32_words_processed = UInt16::conditionally_select(
             cs,
             process_second_word,
-            code_word_0.inner[0].get_variable(),
+            &new_num_byte32_words_processed,
+            &state.num_byte32_words_processed,
         );
-        let code_word_1_be_bytes = code_word_1.to_be_bytes(cs);
 
         // perform two writes. It's never a "pointer" type
         let mem_query_0 = MemoryQuery {
@@ -365,8 +562,15 @@ where
 
         // padding of single byte of 1<<7 and some zeroes after, and interpret it as BE integer
         sha256_padding[0] = UInt32::allocated_constant(cs, 1 << 31);
-        // last word is just number of bits
-        sha256_padding[7] = state.length_in_bits;
+        // last word is just number of bits. Note that we multiply u16 by 32*8 and it can not overflow u32
+        let length_in_bits = unsafe {
+            UInt32::from_variable_unchecked(
+                Num::from_variable(state.num_byte32_words_processed.get_variable())
+                    .mul(cs, &Num::from_variable(words_to_bits.get_variable()))
+                    .get_variable(),
+            )
+        };
+        sha256_padding[7] = length_in_bits;
 
         assert_eq!(sha256_input.len(), 16);
 
@@ -443,25 +647,22 @@ fn decompose_uint32_to_uint16s<F: SmallField, CS: ConstraintSystem<F>>(
 
 #[cfg(test)]
 mod tests {
-    use std::alloc::Global;
-
-    use crate::base_structures::decommit_query;
 
     use super::*;
     use crate::base_structures::vm_state::FULL_SPONGE_QUEUE_STATE_WIDTH;
-    use crate::ethereum_types::{Address, U256};
+    use crate::ethereum_types::U256;
     use boojum::algebraic_props::poseidon2_parameters::Poseidon2GoldilocksExternalMatrix;
-    use boojum::cs::implementations::reference_cs::CSDevelopmentAssembly;
+
     use boojum::cs::traits::gate::GatePlacementStrategy;
     use boojum::cs::CSGeometry;
     use boojum::cs::*;
     use boojum::field::goldilocks::GoldilocksField;
-    use boojum::gadgets::queue::full_state_queue::FullStateCircuitQueueWitness;
+
     use boojum::gadgets::tables::*;
     use boojum::gadgets::traits::allocatable::{CSAllocatable, CSPlaceholder};
-    use boojum::gadgets::u160::UInt160;
+
     use boojum::gadgets::u256::UInt256;
-    use boojum::gadgets::u8::UInt8;
+
     use boojum::implementations::poseidon2::Poseidon2Goldilocks;
     use boojum::worker::Worker;
 
@@ -613,19 +814,19 @@ mod tests {
 
         cs.pad_and_shrink();
         let worker = Worker::new();
-        let mut owned_cs = owned_cs.into_assembly::<Global>();
+        let mut owned_cs = owned_cs.into_assembly::<std::alloc::Global>();
         owned_cs.print_gate_stats();
         assert!(owned_cs.check_if_satisfied(&worker));
     }
 
     fn create_witness_allocator<CS: ConstraintSystem<F>>(
         _cs: &mut CS,
-    ) -> ConditionalWitnessAllocator<F, UInt256<F>> {
+    ) -> ConditionalWitnessSetAllocator<F, UInt256<F>> {
         let code_words_witness = get_byte_code_witness();
+        let mut wit = VecDeque::new();
+        wit.push_back(code_words_witness.into());
 
-        let code_words_allocator = ConditionalWitnessAllocator::<F, UInt256<F>> {
-            witness_source: Arc::new(RwLock::new(code_words_witness.into())),
-        };
+        let code_words_allocator = ConditionalWitnessSetAllocator::<F, UInt256<F>>::new(wit, false);
 
         code_words_allocator
     }
@@ -671,10 +872,15 @@ mod tests {
     }
 
     fn get_code_hash_witness() -> U256 {
-        U256::from_dec_str(
+        let mut bytecode_hash = U256::from_dec_str(
             "452313746998214869734508634865817576060841700842481516984674100922521850987",
         )
-        .unwrap()
+        .unwrap();
+        // mask it
+        assert!(bytecode_hash.0[3] >> 56 == 0x01);
+        bytecode_hash.0[3] &= 0x0000_0000_ffff_ffff;
+
+        bytecode_hash
     }
 
     fn get_byte_code_witness() -> [U256; 33] {

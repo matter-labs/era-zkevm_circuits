@@ -52,7 +52,7 @@ use crate::utils::accumulate_grand_products;
 // for "forward" and "rollback" items, while we do need to have them
 // on different timestamps
 
-const TIMESTAMPED_STORAGE_LOG_ENCODING_LEN: usize = 20;
+pub const TIMESTAMPED_STORAGE_LOG_ENCODING_LEN: usize = 20;
 
 use cs_derive::*;
 
@@ -372,12 +372,13 @@ where
     let zero_u32: UInt32<F> = UInt32::zero(cs);
 
     // there is no code at address 0 in our case, so we can formally use it for all the purposes
-    let previous_packed_key = <[UInt32<F>; PACKED_KEY_LENGTH]>::conditionally_select(
-        cs,
-        structured_input.start_flag,
-        &[zero_u32; PACKED_KEY_LENGTH],
-        &structured_input.hidden_fsm_input.previous_packed_key,
-    );
+    let previous_packed_key =
+        <[UInt32<F>; STORAGE_VALIDITY_CHECK_PACKED_KEY_LENGTH]>::conditionally_select(
+            cs,
+            structured_input.start_flag,
+            &[zero_u32; STORAGE_VALIDITY_CHECK_PACKED_KEY_LENGTH],
+            &structured_input.hidden_fsm_input.previous_packed_key,
+        );
 
     let cycle_idx = UInt32::conditionally_select(
         cs,
@@ -531,7 +532,7 @@ pub fn sort_and_deduplicate_storage_access_inner<
     mut cycle_idx: UInt32<F>,
     fs_challenges: [[Num<F>; TIMESTAMPED_STORAGE_LOG_ENCODING_LEN + 1];
         DEFAULT_NUM_PERMUTATION_ARGUMENT_REPETITIONS],
-    mut previous_packed_key: [UInt32<F>; PACKED_KEY_LENGTH],
+    mut previous_packed_key: [UInt32<F>; STORAGE_VALIDITY_CHECK_PACKED_KEY_LENGTH],
     mut previous_key: UInt256<F>,
     mut previous_address: UInt160<F>,
     mut previous_timestamp: UInt32<F>,
@@ -545,7 +546,7 @@ pub fn sort_and_deduplicate_storage_access_inner<
     [Num<F>; DEFAULT_NUM_PERMUTATION_ARGUMENT_REPETITIONS],
     [Num<F>; DEFAULT_NUM_PERMUTATION_ARGUMENT_REPETITIONS],
     UInt32<F>,
-    [UInt32<F>; PACKED_KEY_LENGTH],
+    [UInt32<F>; STORAGE_VALIDITY_CHECK_PACKED_KEY_LENGTH],
     UInt256<F>,
     UInt160<F>,
     UInt32<F>,
@@ -899,7 +900,7 @@ where
 fn concatenate_key<F: SmallField, CS: ConstraintSystem<F>>(
     _cs: &mut CS,
     key_tuple: (UInt160<F>, UInt256<F>),
-) -> [UInt32<F>; PACKED_KEY_LENGTH] {
+) -> [UInt32<F>; STORAGE_VALIDITY_CHECK_PACKED_KEY_LENGTH] {
     // LE packing so comparison is subtraction
     let (address, key) = key_tuple;
     [
@@ -945,13 +946,9 @@ pub fn unpacked_long_comparison<F: SmallField, CS: ConstraintSystem<F>, const N:
 
 #[cfg(test)]
 mod tests {
-    use std::alloc::Global;
-
     use super::*;
     use boojum::algebraic_props::poseidon2_parameters::Poseidon2GoldilocksExternalMatrix;
-    use boojum::cs::implementations::reference_cs::{
-        CSDevelopmentAssembly, CSReferenceImplementation,
-    };
+
     use boojum::cs::traits::gate::GatePlacementStrategy;
     use boojum::cs::CSGeometry;
     // use boojum::cs::EmptyToolbox;
@@ -965,7 +962,6 @@ mod tests {
     type F = GoldilocksField;
     type P = GoldilocksField;
 
-    use boojum::config::*;
     use boojum::cs::cs_builder::*;
 
     fn configure<
@@ -1093,7 +1089,8 @@ mod tests {
             intermediate_sorted_queue.into_state().tail,
             &round_function,
         );
-        let previous_packed_key = [UInt32::allocated_constant(cs, 0); PACKED_KEY_LENGTH];
+        let previous_packed_key =
+            [UInt32::allocated_constant(cs, 0); STORAGE_VALIDITY_CHECK_PACKED_KEY_LENGTH];
         let previous_key = UInt256::allocated_constant(cs, U256::default());
         let previous_address = UInt160::allocated_constant(cs, Address::default());
         let previous_timestamp = UInt32::allocated_constant(cs, 0);
@@ -1129,7 +1126,7 @@ mod tests {
 
         cs.pad_and_shrink();
         let worker = Worker::new();
-        let mut owned_cs = owned_cs.into_assembly::<Global>();
+        let mut owned_cs = owned_cs.into_assembly::<std::alloc::Global>();
         owned_cs.print_gate_stats();
         assert!(owned_cs.check_if_satisfied(&worker));
     }

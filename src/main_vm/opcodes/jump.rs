@@ -1,10 +1,12 @@
 use super::*;
+use crate::base_structures::register::VMRegister;
+use crate::boojum::gadgets::u256::UInt256;
 
 pub(crate) fn apply_jump<F: SmallField, CS: ConstraintSystem<F>>(
     cs: &mut CS,
     _draft_vm_state: &VmLocalState<F>,
     common_opcode_state: &CommonOpcodeState<F>,
-    _opcode_carry_parts: &AfterDecodingCarryParts<F>,
+    opcode_carry_parts: &AfterDecodingCarryParts<F>,
     diffs_accumulator: &mut StateDiffsAccumulator<F>,
 ) {
     const JUMP_OPCODE: zkevm_opcode_defs::Opcode =
@@ -32,7 +34,22 @@ pub(crate) fn apply_jump<F: SmallField, CS: ConstraintSystem<F>>(
         ],
     );
 
+    // save next_pc into dst0
+    let boolean_false = Boolean::allocated_constant(cs, false);
+    let mut saved_next_pc = UInt256::zero(cs);
+    saved_next_pc.inner[0] =
+        unsafe { UInt32::from_variable_unchecked(opcode_carry_parts.next_pc.get_variable()) };
+    let dst0 = VMRegister {
+        is_pointer: boolean_false,
+        value: saved_next_pc,
+    };
+    let can_write_into_memory = JUMP_OPCODE.can_write_dst0_into_memory(SUPPORTED_ISA_VERSION);
+
     diffs_accumulator
         .new_pc_candidates
         .push((should_apply, jump_dst));
+
+    diffs_accumulator
+        .dst_0_values
+        .push((can_write_into_memory, should_apply, dst0));
 }

@@ -5,7 +5,7 @@ use boojum::field::SmallField;
 use boojum::pairing::ff::PrimeField;
 use derivative::*;
 
-const TABLE_NAME: &'static str = "FIXEDBASEMUL table";
+const TABLE_NAME: &'static str = "Secp256k1 FIXEDBASEMUL table";
 
 #[derive(Derivative)]
 #[derivative(Clone, Copy, Debug, PartialEq, Eq)]

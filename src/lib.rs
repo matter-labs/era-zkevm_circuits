@@ -1,7 +1,6 @@
 #![allow(clippy::drop_ref)]
 #![allow(dead_code)]
 #![allow(dropping_references)]
-#![allow(unused_imports)]
 #![feature(generic_const_exprs)]
 #![feature(array_chunks)]
 #![feature(more_qualified_paths)]
@@ -27,11 +26,13 @@ pub mod main_vm;
 pub mod ram_permutation;
 pub mod recursion;
 pub mod scheduler;
+pub mod secp256r1_verify;
 pub mod sha256_round_function;
 pub mod sort_decommittment_requests;
 pub mod storage_application;
 pub mod storage_validity_by_grand_product;
 pub mod tables;
+pub mod transient_storage_validity_by_grand_product;
 pub mod utils;
 
 use boojum::pairing::ff;

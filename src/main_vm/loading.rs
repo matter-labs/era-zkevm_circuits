@@ -90,83 +90,29 @@ pub fn initial_bootloader_state<
     let callstack_empty_state = [zero_num; FULL_SPONGE_QUEUE_STATE_WIDTH];
 
     let mut current_state = callstack_empty_state.map(|el| el.get_variable());
+    assert!(empty_entry_encoding.len() % 8 == 0);
 
-    // absorb by replacement
-    let round_0_initial = [
-        empty_entry_encoding[0],
-        empty_entry_encoding[1],
-        empty_entry_encoding[2],
-        empty_entry_encoding[3],
-        empty_entry_encoding[4],
-        empty_entry_encoding[5],
-        empty_entry_encoding[6],
-        empty_entry_encoding[7],
-        current_state[8],
-        current_state[9],
-        current_state[10],
-        current_state[11],
-    ];
+    for encoding_chunk in empty_entry_encoding.array_chunks::<8>() {
+        // absorb by replacement
+        let initial_state = [
+            encoding_chunk[0],
+            encoding_chunk[1],
+            encoding_chunk[2],
+            encoding_chunk[3],
+            encoding_chunk[4],
+            encoding_chunk[5],
+            encoding_chunk[6],
+            encoding_chunk[7],
+            current_state[8],
+            current_state[9],
+            current_state[10],
+            current_state[11],
+        ];
 
-    let round_0_final = R::compute_round_function(cs, round_0_initial);
+        let final_state = R::compute_round_function(cs, initial_state);
 
-    current_state = round_0_final;
-
-    let round_1_initial = [
-        empty_entry_encoding[8],
-        empty_entry_encoding[9],
-        empty_entry_encoding[10],
-        empty_entry_encoding[11],
-        empty_entry_encoding[12],
-        empty_entry_encoding[13],
-        empty_entry_encoding[14],
-        empty_entry_encoding[15],
-        current_state[8],
-        current_state[9],
-        current_state[10],
-        current_state[11],
-    ];
-
-    let round_1_final = R::compute_round_function(cs, round_1_initial);
-
-    current_state = round_1_final;
-
-    let round_2_initial = [
-        empty_entry_encoding[16],
-        empty_entry_encoding[17],
-        empty_entry_encoding[18],
-        empty_entry_encoding[19],
-        empty_entry_encoding[20],
-        empty_entry_encoding[21],
-        empty_entry_encoding[22],
-        empty_entry_encoding[23],
-        current_state[8],
-        current_state[9],
-        current_state[10],
-        current_state[11],
-    ];
-
-    let round_2_final = R::compute_round_function(cs, round_2_initial);
-
-    current_state = round_2_final;
-
-    let round_3_initial = [
-        empty_entry_encoding[24],
-        empty_entry_encoding[25],
-        empty_entry_encoding[26],
-        empty_entry_encoding[27],
-        empty_entry_encoding[28],
-        empty_entry_encoding[29],
-        empty_entry_encoding[30],
-        empty_entry_encoding[31],
-        current_state[8],
-        current_state[9],
-        current_state[10],
-        current_state[11],
-    ];
-
-    let round_3_final = R::compute_round_function(cs, round_3_initial);
-
-    current_state = round_3_final;
+        current_state = final_state;
+    }
 
     let callstack_initial_state = current_state.map(|el| Num::from_variable(el));
 

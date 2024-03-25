@@ -108,6 +108,12 @@ where
         }
     }
 
+    pub fn new(witness: VecDeque<EL::Witness>) -> Self {
+        Self {
+            witness_source: Arc::new(RwLock::new(witness)),
+        }
+    }
+
     pub fn conditionally_allocate_with_default<
         CS: ConstraintSystem<F>,
         DEF: FnOnce() -> EL::Witness + 'static + Send + Sync,

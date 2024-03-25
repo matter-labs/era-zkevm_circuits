@@ -13,7 +13,7 @@ use zkevm_opcode_defs::{
 
 // opcode defs only provide runtime-computeable variable, so we have to pin ISA version and assert
 
-pub const SUPPORTED_ISA_VERSION: ISAVersion = ISAVersion(1);
+pub const SUPPORTED_ISA_VERSION: ISAVersion = ISAVersion(2);
 
 const _: () = if SUPPORTED_ISA_VERSION.0 != zkevm_opcode_defs::DEFAULT_ISA_VERSION.0 {
     panic!()

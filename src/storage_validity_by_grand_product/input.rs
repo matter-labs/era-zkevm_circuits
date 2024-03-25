@@ -25,7 +25,7 @@ use boojum::{
 use cs_derive::*;
 use derivative::*;
 
-pub const PACKED_KEY_LENGTH: usize = 5 + 8;
+pub const STORAGE_VALIDITY_CHECK_PACKED_KEY_LENGTH: usize = 5 + 8;
 
 use super::TimestampedStorageLogRecord;
 
@@ -41,7 +41,7 @@ pub struct StorageDeduplicatorFSMInputOutput<F: SmallField> {
     pub current_intermediate_sorted_queue_state: QueueState<F, QUEUE_STATE_WIDTH>,
     pub current_final_sorted_queue_state: QueueState<F, QUEUE_STATE_WIDTH>,
     pub cycle_idx: UInt32<F>,
-    pub previous_packed_key: [UInt32<F>; PACKED_KEY_LENGTH],
+    pub previous_packed_key: [UInt32<F>; STORAGE_VALIDITY_CHECK_PACKED_KEY_LENGTH],
     pub previous_key: UInt256<F>,
     pub previous_address: UInt160<F>,
     pub previous_timestamp: UInt32<F>,
@@ -67,7 +67,7 @@ impl<F: SmallField> CSPlaceholder<F> for StorageDeduplicatorFSMInputOutput<F> {
                 QueueState::<F, QUEUE_STATE_WIDTH>::placeholder(cs),
             current_final_sorted_queue_state: QueueState::<F, QUEUE_STATE_WIDTH>::placeholder(cs),
             cycle_idx: zero_u32,
-            previous_packed_key: [zero_u32; PACKED_KEY_LENGTH],
+            previous_packed_key: [zero_u32; STORAGE_VALIDITY_CHECK_PACKED_KEY_LENGTH],
             previous_key: zero_u256,
             previous_address: zero_address,
             previous_timestamp: zero_u32,
