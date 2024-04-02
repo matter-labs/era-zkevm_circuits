@@ -8,7 +8,6 @@ use boojum::gadgets::recursion::allocated_vk::AllocatedVerificationKey;
 use boojum::gadgets::recursion::recursive_transcript::RecursiveTranscript;
 use boojum::gadgets::recursion::recursive_tree_hasher::RecursiveTreeHasher;
 
-use crate::boojum::cs::gates::PublicInputGate;
 use crate::fsm_input_output::circuit_inputs::INPUT_OUTPUT_COMMITMENT_LENGTH;
 use boojum::algebraic_props::round_function::AlgebraicRoundFunction;
 use boojum::cs::traits::cs::ConstraintSystem;
@@ -161,10 +160,13 @@ where
 
     let input_commitment: [_; INPUT_OUTPUT_COMMITMENT_LENGTH] =
         commit_variable_length_encodable_item(cs, &input, round_function);
-    for el in input_commitment.iter() {
-        let gate = PublicInputGate::new(el.get_variable());
-        gate.add_to_cs(cs);
-    }
+    // NOTE: we usually put inputs as fixed places for all recursive circuits, even though for this type
+    // we do not have to do it strictly speaking
+
+    // for el in input_commitment.iter() {
+    //     let gate = PublicInputGate::new(el.get_variable());
+    //     gate.add_to_cs(cs);
+    // }
 
     input_commitment
 }

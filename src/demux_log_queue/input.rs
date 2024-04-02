@@ -108,6 +108,10 @@ impl<F: SmallField> LogDemuxerOutputData<F> {
                 DemuxOutput::Secp256r1Verify,
                 &self.output_queue_states[DemuxOutput::Secp256r1Verify as usize],
             ),
+            (
+                DemuxOutput::TransientStorage,
+                &self.output_queue_states[DemuxOutput::TransientStorage as usize],
+            ),
         ];
         assert_eq!(tuples.len(), NUM_DEMUX_OUTPUTS);
 

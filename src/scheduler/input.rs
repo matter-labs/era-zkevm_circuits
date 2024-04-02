@@ -1,6 +1,5 @@
 use super::*;
 use boojum::cs::implementations::proof::Proof;
-use boojum::cs::implementations::verifier::VerificationKey;
 
 use boojum::field::SmallField;
 
@@ -83,10 +82,6 @@ pub struct SchedulerCircuitInstanceWitness<
     // proofs for every individual circuit type's aggregation subtree
     #[derivative(Debug = "ignore")]
     pub proof_witnesses: VecDeque<Proof<F, H::NonCircuitSimulator, EXT>>,
-    #[derivative(Debug = "ignore")]
-    pub node_layer_vk_witness: VerificationKey<F, H::NonCircuitSimulator>,
-    #[derivative(Debug = "ignore")]
-    pub leaf_layer_parameters: [RecursionLeafParametersWitness<F>; NUM_CIRCUIT_TYPES_TO_SCHEDULE],
 }
 
 impl<F: SmallField, H: RecursiveTreeHasher<F, Num<F>>, EXT: FieldExtension<2, BaseField = F>>
@@ -136,10 +131,6 @@ impl<F: SmallField, H: RecursiveTreeHasher<F, Num<F>>, EXT: FieldExtension<2, Ba
             eip4844_witnesses: std::array::from_fn(|_| None),
 
             proof_witnesses: VecDeque::new(),
-            node_layer_vk_witness: VerificationKey::default(),
-            leaf_layer_parameters: std::array::from_fn(|_| {
-                RecursionLeafParameters::placeholder_witness()
-            }),
         }
     }
 }

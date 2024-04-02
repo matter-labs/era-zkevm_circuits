@@ -42,6 +42,7 @@ use boojum::gadgets::num::Num;
 use boojum::gadgets::recursion::recursive_tree_hasher::RecursiveTreeHasher;
 
 use crate::base_structures::precompile_input_outputs::*;
+use crate::recursion::NUM_BASE_LAYER_CIRCUITS;
 use boojum::algebraic_props::round_function::AlgebraicRoundFunction;
 use boojum::cs::implementations::prover::ProofConfig;
 use boojum::cs::implementations::verifier::VerificationKeyCircuitGeometry;
@@ -56,6 +57,7 @@ use boojum::gadgets::traits::round_function::CircuitRoundFunction;
 use std::collections::HashMap;
 
 use crate::base_structures::vm_state::*;
+use crate::boojum::cs::implementations::verifier::VerificationKey;
 use crate::code_unpacker_sha256::input::*;
 use crate::demux_log_queue::input::*;
 use crate::eip_4844::input::*;
@@ -100,6 +102,12 @@ pub const SEQUENCE_OF_CIRCUIT_TYPES: [BaseLayerCircuitType; NUM_CIRCUITS_FOR_VAR
 pub struct SchedulerConfig<F: SmallField, H: TreeHasher<F>, EXT: FieldExtension<2, BaseField = F>> {
     pub proof_config: ProofConfig,
     pub vk_fixed_parameters: VerificationKeyCircuitGeometry,
+    #[derivative(Debug = "ignore")]
+    pub recursion_tip_vk: VerificationKey<F, H>,
+    #[derivative(Debug = "ignore")]
+    pub node_layer_vk: VerificationKey<F, H>,
+    #[derivative(Debug = "ignore")]
+    pub leaf_layer_parameters: [RecursionLeafParametersWitness<F>; NUM_BASE_LAYER_CIRCUITS],
     pub capacity: usize,
     pub _marker: std::marker::PhantomData<(F, H, EXT)>,
 }
@@ -134,7 +142,7 @@ pub fn scheduler_function<
     [(); <MemoryQuery<F> as CSAllocatableExt<F>>::INTERNAL_STRUCT_LEN]:,
     [(); <DecommitQuery<F> as CSAllocatableExt<F>>::INTERNAL_STRUCT_LEN]:,
 {
-    assert!(NUM_RECURSION_TIPS_USED * RECURSION_TIP_ARITY >= NUM_CIRCUITS_FOR_VARIABLE_SCHEDULING);
+    assert!(NUM_RECURSION_TIPS_USED * RECURSION_TIP_ARITY >= NUM_CIRCUIT_TYPES_TO_SCHEDULE);
 
     let prev_block_data = BlockPassthroughData::allocate(cs, witness.prev_block_data.clone());
     let block_meta_parameters =
@@ -1048,7 +1056,7 @@ pub fn scheduler_function<
             let start_as_next = tmp[idx];
             let do_this_stage = Boolean::multi_or(cs, &[start_as_next, proceed_current]);
             execution_stage_bitmask[idx] = do_this_stage;
-            if idx + 1 < NUM_CIRCUIT_TYPES_TO_SCHEDULE {
+            if idx + 1 < NUM_CIRCUITS_FOR_VARIABLE_SCHEDULING {
                 tmp[idx + 1] = finished_this_stage;
             }
         }
@@ -1063,19 +1071,23 @@ pub fn scheduler_function<
     // so we are done!
     Boolean::enforce_equal(cs, &execution_flag, &boolean_false);
 
-    // actually perform verification
-    let leaf_layer_parameters = witness
+    // NOTE: values below are allocated constant, so their values end up in
+    // scheduler setup -> verification key
+    let leaf_layer_parameters = config
         .leaf_layer_parameters
         .clone()
-        .map(|el| RecursionLeafParameters::allocate(cs, el));
+        .map(|el| RecursionLeafParameters::allocated_constant(cs, el));
 
     let leaf_layer_parameters_commitment: [_; LEAF_LAYER_PARAMETERS_COMMITMENT_LENGTH] =
         commit_variable_length_encodable_item(cs, &leaf_layer_parameters, round_function);
 
     let node_layer_vk =
-        AllocatedVerificationKey::<F, H>::allocate(cs, witness.node_layer_vk_witness.clone());
+        AllocatedVerificationKey::<F, H>::allocate_constant(cs, config.node_layer_vk.clone());
     let node_layer_vk_commitment: [_; VK_COMMITMENT_LENGTH] =
         commit_variable_length_encodable_item(cs, &node_layer_vk, round_function);
+
+    let recursion_tip_verification_key =
+        AllocatedVerificationKey::<F, H>::allocate_constant(cs, config.recursion_tip_vk.clone());
 
     if crate::config::CIRCUIT_VERSOBE {
         dbg!(leaf_layer_parameters_commitment.witness_hook(cs)());
@@ -1162,6 +1174,8 @@ pub fn scheduler_function<
         let mut it = it.enumerate();
 
         for _ in 0..NUM_RECURSION_TIPS_USED {
+            // NOTE: even though node/leaf circuits are defined over witness-provided (input-linked)
+            // verification keys, here we EXPECT to have specific CONSTANT verificaion parameters
             let mut recursion_tip_input = RecursionTipInput::placeholder(cs);
             recursion_tip_input.leaf_layer_parameters = leaf_layer_parameters;
             recursion_tip_input.node_layer_vk_commitment = node_layer_vk_commitment;
@@ -1199,7 +1213,7 @@ pub fn scheduler_function<
                 &proof,
                 &config.vk_fixed_parameters,
                 &config.proof_config,
-                &node_layer_vk,
+                &recursion_tip_verification_key,
             );
 
             Boolean::enforce_equal(cs, &is_valid, &boolean_true);
@@ -1287,35 +1301,10 @@ pub fn scheduler_function<
         previous_block_aux_hash,
     );
 
-    // form full block hash
-
+    // form full block hash, it's just a hash of concatenation of previous and new full content hashes
     let mut flattened_public_input = vec![];
     flattened_public_input.extend(previous_block_content_hash);
     flattened_public_input.extend(this_block_content_hash);
-    // recursion parameters
-
-    let mut recursion_node_verification_key_hash = [zero_u8; 32];
-    for (dst, src) in recursion_node_verification_key_hash
-        .array_chunks_mut::<8>()
-        .zip(node_layer_vk_commitment.iter())
-    {
-        let le_bytes = src.constraint_bit_length_as_bytes(cs, 64);
-        dst.copy_from_slice(&le_bytes[..]);
-        dst.reverse();
-    }
-
-    let mut leaf_layer_parameters_hash = [zero_u8; 32];
-    for (dst, src) in leaf_layer_parameters_hash
-        .array_chunks_mut::<8>()
-        .zip(leaf_layer_parameters_commitment.iter())
-    {
-        let le_bytes = src.constraint_bit_length_as_bytes(cs, 64);
-        dst.copy_from_slice(&le_bytes[..]);
-        dst.reverse();
-    }
-
-    flattened_public_input.extend(recursion_node_verification_key_hash);
-    flattened_public_input.extend(leaf_layer_parameters_hash);
 
     let input_keccak_hash = keccak256::keccak256(cs, &flattened_public_input);
     let take_by = F::CAPACITY_BITS / 8;

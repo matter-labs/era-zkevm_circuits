@@ -40,6 +40,27 @@ impl<F: SmallField> CSPlaceholder<F> for RecursionLeafParameters<F> {
     }
 }
 
+impl<F: SmallField> RecursionLeafParameters<F> {
+    pub fn allocated_constant<CS: ConstraintSystem<F>>(
+        cs: &mut CS,
+        value: <Self as CSAllocatable<F>>::Witness,
+    ) -> Self {
+        let circuit_type = Num::allocated_constant(cs, value.circuit_type);
+        let basic_circuit_vk_commitment = value
+            .basic_circuit_vk_commitment
+            .map(|el| Num::allocated_constant(cs, el));
+        let leaf_layer_vk_commitment = value
+            .leaf_layer_vk_commitment
+            .map(|el| Num::allocated_constant(cs, el));
+
+        Self {
+            circuit_type,
+            basic_circuit_vk_commitment,
+            leaf_layer_vk_commitment,
+        }
+    }
+}
+
 #[derive(Derivative, CSAllocatable, CSSelectable, CSVarLengthEncodable, WitnessHookable)]
 #[derivative(Clone, Copy, Debug)]
 #[DerivePrettyComparison("true")]

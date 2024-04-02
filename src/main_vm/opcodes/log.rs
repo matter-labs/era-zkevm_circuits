@@ -711,7 +711,7 @@ pub(crate) fn apply_log<
         unsafe { old_forward_queue_length.increment_unchecked(cs) };
     let new_forward_queue_length = UInt32::conditionally_select(
         cs,
-        should_apply,
+        should_apply_io,
         &new_forward_queue_length_candidate,
         &old_forward_queue_length,
     );
