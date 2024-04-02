@@ -10,6 +10,8 @@ use crate::linear_hasher::params::NS_SIZE;
 use super::nmt::Nmt;
 use super::params::{NMT_ROOT_SIZE, SHARE_BYTE_LEN};
 
+// Circuit implementation of celestia blob commitment computation.
+// Official Golang implementation: https://github.com/celestiaorg/celestia-app/blob/915847191e80d836f862eea2664949d9a240abea/x/blob/types/payforblob.go#L219
 pub fn create_celestis_commitment<F: SmallField, CS: ConstraintSystem<F>>(
     cs: &mut CS,
     namespace_version: UInt8<F>,
