@@ -21,7 +21,7 @@ use crate::recursion::leaf_layer::input::RecursionLeafParameters;
 use boojum::field::FieldExtension;
 use boojum::serde_utils::BigArraySerde;
 
-pub const RECURSION_TIP_ARITY: usize = 16;
+pub const RECURSION_TIP_ARITY: usize = 32;
 
 #[derive(Derivative, CSAllocatable, CSSelectable, CSVarLengthEncodable, WitnessHookable)]
 #[derivative(Clone, Copy, Debug)]
