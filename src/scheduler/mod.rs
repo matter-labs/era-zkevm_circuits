@@ -33,6 +33,7 @@ use crate::base_structures::recursion_query::*;
 use crate::demux_log_queue::DemuxOutput;
 use crate::fsm_input_output::circuit_inputs::INPUT_OUTPUT_COMMITMENT_LENGTH;
 use crate::linear_hasher::input::LinearHasherOutputData;
+use crate::main_vm::opcodes::normalize_bytecode_hash_for_decommit;
 use crate::recursion::recursion_tip::input::RecursionTipInput;
 use crate::recursion::recursion_tip::input::RECURSION_TIP_ARITY;
 use crate::recursion::VK_COMMITMENT_LENGTH;
@@ -167,7 +168,8 @@ pub fn scheduler_function<
     initial_memory_queue_state.length = bootloader_heap_memory_state.length;
 
     let mut decommittments_queue = DecommitQueue::<F, R>::empty(cs);
-    let bootloader_code_hash = block_meta_parameters.bootloader_code_hash;
+    let mut bootloader_code_hash = block_meta_parameters.bootloader_code_hash;
+    normalize_bytecode_hash_for_decommit(cs, &mut bootloader_code_hash);
     let bootloader_code_page =
         UInt32::allocated_constant(cs, zkevm_opcode_defs::BOOTLOADER_CODE_PAGE);
     let scheduler_timestamp = UInt32::allocated_constant(cs, SCHEDULER_TIMESTAMP);
@@ -365,7 +367,7 @@ pub fn scheduler_function<
         secp256r1_verify_circuit_observable_output_commitment,
     ) = compute_precompile_commitment(
         cs,
-        &ecrecover_access_queue_state,
+        &secp256r1_verify_access_queue_state,
         &ecrecover_observable_output.final_memory_state,
         &secp256r1_verify_observable_output.final_memory_state,
         round_function,
@@ -706,8 +708,8 @@ pub fn scheduler_function<
             .length
             .is_zero(cs);
 
-        for (_, subqueue) in log_demuxer_observable_output
-            .all_output_queues_refs()
+        for subqueue in log_demuxer_observable_output
+            .output_queue_states
             .into_iter()
         {
             let output_queue_is_empty = subqueue.tail.length.is_zero(cs);
@@ -857,18 +859,45 @@ pub fn scheduler_function<
         skip_flags[(BaseLayerCircuitType::TransientStorageChecker as u8 as usize) - 1] =
             Some(should_skip);
     }
+    // L2 to L1 linear hasher
+    {
+        let empty_hash = {
+            use zkevm_opcode_defs::sha3::*;
 
-    // for (idx, el) in skip_flags.iter().enumerate() {
-    //     if let Some(el) = el {
-    //         let circuit_type = BaseLayerCircuitType::from_numeric_value((idx+1) as u8);
-    //         println!("Skip for {:?} = {:?}", circuit_type, el.witness_hook(cs)());
-    //     }
-    // }
+            let mut result = [0u8; 32];
+            let digest = Keccak256::digest(&[]);
+            result.copy_from_slice(digest.as_slice());
 
-    // In practice we do NOT skip it
-    // skip_flags[(BaseLayerCircuitType::L1MessagesHasher as u8 as usize) - 1] = Some(
-    //     l1messages_sorter_observable_output.final_queue_state.tail.length.is_zero(cs)
-    // );
+            result.map(|el| UInt8::allocated_constant(cs, el))
+        };
+
+        let should_skip = l1messages_access_queue_state.tail.length.is_zero(cs);
+
+        // if nothing to hash, we expect empty hash
+        for (a, b) in l1messages_linear_hasher_observable_output
+            .keccak256_hash
+            .iter()
+            .zip(empty_hash.iter())
+        {
+            Num::conditionally_enforce_equal(
+                cs,
+                should_skip,
+                &Num::from_variable(a.get_variable()),
+                &Num::from_variable(b.get_variable()),
+            );
+        }
+
+        skip_flags[(BaseLayerCircuitType::L1MessagesHasher as u8 as usize) - 1] = Some(should_skip);
+    }
+
+    if crate::config::CIRCUIT_VERSOBE {
+        for (idx, el) in skip_flags.iter().enumerate() {
+            if let Some(el) = el {
+                let circuit_type = BaseLayerCircuitType::from_numeric_value((idx + 1) as u8);
+                println!("Skip for {:?} = {:?}", circuit_type, el.witness_hook(cs)());
+            }
+        }
+    }
 
     // now we just walk one by one
 
@@ -931,6 +960,18 @@ pub fn scheduler_function<
             };
 
             let validate_observable_input = validate; // input commitment is ALWAYS the same for all the circuits of some type
+            if crate::config::CIRCUIT_VERSOBE {
+                if validate_observable_input.witness_hook(cs)().unwrap_or(false) {
+                    println!("Validating input for circuit type {:?}", circuit_type);
+                    assert_eq!(
+                        closed_form_input
+                            .observable_input_committment
+                            .witness_hook(cs)()
+                        .unwrap(),
+                        sample_circuit_commitment.witness_hook(cs)().unwrap(),
+                    )
+                }
+            }
             conditionally_enforce_circuit_commitment(
                 cs,
                 validate_observable_input,
@@ -957,6 +998,19 @@ pub fn scheduler_function<
                 ));
             // .unwrap_or([zero_num; CLOSED_FORM_COMMITTMENT_LENGTH]);
 
+            if crate::config::CIRCUIT_VERSOBE {
+                if validate_observable_output.witness_hook(cs)().unwrap_or(false) {
+                    println!("Validating output for circuit type {:?}", circuit_type);
+                    assert_eq!(
+                        closed_form_input
+                            .observable_output_committment
+                            .witness_hook(cs)()
+                        .unwrap(),
+                        sample_circuit_commitment.witness_hook(cs)().unwrap(),
+                    )
+                }
+            }
+
             conditionally_enforce_circuit_commitment(
                 cs,
                 validate_observable_output,
@@ -972,6 +1026,11 @@ pub fn scheduler_function<
 
             let stage_just_finished =
                 Boolean::multi_and(cs, &[should_start_next, execution_flag, *stage_flag]);
+            if crate::config::CIRCUIT_VERSOBE {
+                if stage_just_finished.witness_hook(cs)().unwrap_or(false) {
+                    println!("Finished {:?} circuit type", circuit_type);
+                }
+            }
             next_mask[idx] = stage_just_finished;
 
             let circuit_type = UInt8::allocated_constant(cs, *circuit_type as u8).into_num();
@@ -1162,6 +1221,10 @@ pub fn scheduler_function<
     let verifier = verifier_builder.create_recursive_verifier(cs);
 
     {
+        assert_eq!(
+            SEQUENCE_OF_CIRCUIT_TYPES.len(),
+            recursive_queue_state_tails.len()
+        );
         let it = SEQUENCE_OF_CIRCUIT_TYPES
             .into_iter()
             .zip(recursive_queue_state_tails.into_iter());
@@ -1192,6 +1255,10 @@ pub fn scheduler_function<
                     queue_state.tail = state;
                     *state_dst = queue_state;
                 }
+            }
+
+            if crate::config::CIRCUIT_VERSOBE {
+                dbg!(recursion_tip_input.witness_hook(cs)());
             }
 
             let expected_input_commitment: [_; INPUT_OUTPUT_COMMITMENT_LENGTH] =

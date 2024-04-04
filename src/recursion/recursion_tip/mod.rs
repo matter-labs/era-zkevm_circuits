@@ -97,10 +97,16 @@ where
         vk.setup_merkle_tree_cap.len(),
         config.vk_fixed_parameters.cap_size
     );
-    let _vk_commitment_computed: [_; VK_COMMITMENT_LENGTH] =
+    let vk_commitment_computed: [_; VK_COMMITMENT_LENGTH] =
         commit_variable_length_encodable_item(cs, &vk, round_function);
-
-    // We expect to see a NODE, and propagate to it
+    // self-check that it's indeed NODE
+    for (a, b) in node_layer_vk_commitment
+        .iter()
+        .zip(vk_commitment_computed.iter())
+    {
+        Num::enforce_equal(cs, a, b);
+    }
+    // from that moment we can just use allocated key to verify below
 
     let RecursionTipConfig {
         proof_config,
@@ -117,6 +123,12 @@ where
         .into_iter()
         .zip(queue_set.into_iter())
     {
+        if crate::config::CIRCUIT_VERSOBE {
+            use boojum::gadgets::traits::witnessable::WitnessHookable;
+            dbg!(branch_type.witness_hook(cs)());
+            dbg!(initial_queue.witness_hook(cs)());
+        }
+
         let proof_witness = proof_witnesses.pop_front();
 
         let proof = AllocatedProof::allocate_from_witness(

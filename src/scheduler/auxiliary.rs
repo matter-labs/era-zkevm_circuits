@@ -189,18 +189,16 @@ pub(crate) fn compute_transient_storage_checker_circuit_commitment<
     [Num<F>; CLOSED_FORM_COMMITTMENT_LENGTH],
     [Num<F>; CLOSED_FORM_COMMITTMENT_LENGTH],
 ) {
-    // transient storage doesn't care about shard ID at all
-    let shard_id = UInt8::allocate_constant(cs, 0);
+    use crate::transient_storage_validity_by_grand_product::input::TransientStorageDeduplicatorInputData;
 
     let mut full_state = QueueState::empty(cs);
     full_state.tail = *intermediate_queue_state;
-    let input_data = StorageDeduplicatorInputData {
-        shard_id_to_process: shard_id,
+    let transient_input_data = TransientStorageDeduplicatorInputData {
         unsorted_log_queue_state: queue_state_before.clone(),
         intermediate_sorted_queue_state: full_state,
     };
     let input_data_commitment =
-        commit_variable_length_encodable_item(cs, &input_data, round_function);
+        commit_variable_length_encodable_item(cs, &transient_input_data, round_function);
 
     let output_data = ();
     let output_data_commitment =

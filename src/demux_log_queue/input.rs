@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 
 use crate::base_structures::{
     log_query::{LogQuery, LOG_QUERY_PACKED_WIDTH},
@@ -74,7 +74,7 @@ impl<F: SmallField> CSPlaceholder<F> for LogDemuxerOutputData<F> {
 impl<F: SmallField> LogDemuxerOutputData<F> {
     pub fn all_output_queues_refs(
         &self,
-    ) -> HashMap<DemuxOutput, &QueueState<F, QUEUE_STATE_WIDTH>> {
+    ) -> BTreeMap<DemuxOutput, &QueueState<F, QUEUE_STATE_WIDTH>> {
         let tuples = [
             (
                 DemuxOutput::RollupStorage,
@@ -115,7 +115,7 @@ impl<F: SmallField> LogDemuxerOutputData<F> {
         ];
         assert_eq!(tuples.len(), NUM_DEMUX_OUTPUTS);
 
-        HashMap::from_iter(tuples.into_iter())
+        BTreeMap::from_iter(tuples.into_iter())
     }
 }
 

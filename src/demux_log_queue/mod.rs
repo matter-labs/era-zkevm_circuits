@@ -39,7 +39,7 @@ pub type StorageLogQueueWitness<F> =
     CircuitQueueWitness<F, LogQuery<F>, QUEUE_STATE_WIDTH, LOG_QUERY_PACKED_WIDTH>;
 
 #[repr(usize)]
-#[derive(Clone, Copy, Debug, Hash, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Hash, PartialEq, Eq, PartialOrd, Ord)]
 pub enum DemuxOutput {
     RollupStorage = 0,
     PorterStorage,
