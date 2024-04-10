@@ -331,7 +331,7 @@ where
     new_callstack_entry.aux_heap_upper_bound = Selectable::conditionally_select(
         cs,
         is_local_frame,
-        &current_callstack_entry.heap_upper_bound,
+        &current_callstack_entry.aux_heap_upper_bound,
         &new_callstack_entry.aux_heap_upper_bound,
     );
 
