@@ -74,11 +74,11 @@ pub(crate) fn apply_uma<
     let is_uma_static_memory_read = common_opcode_state
         .decoded_opcode
         .properties_bits
-        .boolean_for_variant(UMA_AUX_HEAP_READ_OPCODE);
+        .boolean_for_variant(UMA_STATIC_MEMORY_READ_OPCODE);
     let is_uma_static_memory_write = common_opcode_state
         .decoded_opcode
         .properties_bits
-        .boolean_for_variant(UMA_AUX_HEAP_WRITE_OPCODE);
+        .boolean_for_variant(UMA_STATIC_MEMORY_WRITE_OPCODE);
 
     let increment_offset = common_opcode_state
         .decoded_opcode

@@ -136,7 +136,7 @@ pub(crate) fn apply_log<
     const TRANSIENT_STORAGE_WRITE_OPCODE: zkevm_opcode_defs::Opcode =
         zkevm_opcode_defs::Opcode::Log(LogOpcode::TransientStorageWrite);
 
-    let should_apply = common_opcode_state
+    let should_apply_opcode_base = common_opcode_state
         .decoded_opcode
         .properties_bits
         .boolean_for_opcode(STORAGE_READ_OPCODE);
@@ -191,7 +191,7 @@ pub(crate) fn apply_log<
     };
 
     if crate::config::CIRCUIT_VERSOBE {
-        if should_apply.witness_hook(&*cs)().unwrap_or(false) {
+        if should_apply_opcode_base.witness_hook(&*cs)().unwrap_or(false) {
             println!("Applying LOG");
             if is_storage_read.witness_hook(&*cs)().unwrap_or(false) {
                 println!("SLOAD");
@@ -257,7 +257,7 @@ pub(crate) fn apply_log<
     // check that refund is >=0
     let top_byte = common_opcode_state.src1_view.u8x32_view[7];
     let is_negative = test_if_bit_is_set(cs, &top_byte, 7);
-    let should_enforce = Boolean::multi_and(cs, &[is_precompile, should_apply]);
+    let should_enforce = Boolean::multi_and(cs, &[is_precompile, should_apply_opcode_base]);
     is_negative.conditionally_enforce_false(cs, should_enforce);
 
     let is_state_storage_access: Boolean<F> =
@@ -340,7 +340,8 @@ pub(crate) fn apply_log<
     };
 
     let oracle = witness_oracle.clone();
-    let execute_storage_access = Boolean::multi_and(cs, &[should_apply, is_state_storage_access]);
+    let execute_storage_access =
+        Boolean::multi_and(cs, &[should_apply_opcode_base, is_state_storage_access]);
     // we should assemble all the dependencies here, and we will use AllocateExt here
     let mut dependencies =
         Vec::with_capacity(<LogQuery<F> as CSAllocatableExt<F>>::INTERNAL_STRUCT_LEN + 2);
@@ -457,8 +458,12 @@ pub(crate) fn apply_log<
 
     // if not enough then leave only 0
     let ergs_remaining = ergs_remaining.mask_negated(cs, not_enough_ergs_for_op);
+
+    // NOTE: here we will start to use other markers that will check branches being taken below. Some changes
+    // (namely - reduction of ergs here) will persist even if opcode does NOT perform material work
+
     // and we do not execute any ops in practice
-    let should_apply = Boolean::multi_and(cs, &[should_apply, have_enough_ergs]);
+    let should_apply = Boolean::multi_and(cs, &[should_apply_opcode_base, have_enough_ergs]);
     let should_apply_io = Boolean::multi_and(cs, &[should_apply, is_io_like_operation]);
 
     // we right away compute final cost of the operation here, and we will merge it into state when we do final diffs processing
@@ -648,14 +653,13 @@ pub(crate) fn apply_log<
     let decommit_refund = cost_of_decommit_call.mask_negated(cs, is_first);
     let decommit_refund = decommit_refund.mask(cs, should_decommit);
 
+    // NOTE: cold_warm_access_ergs_refund is already masked if it's not a storage access
     let refund_value = UInt32::conditionally_select(
         cs,
-        is_state_storage_access,
+        is_decommit,
+        &decommit_refund,
         &cold_warm_access_ergs_refund,
-        &zero_u32,
     );
-    let refund_value =
-        UInt32::conditionally_select(cs, is_decommit, &decommit_refund, &refund_value);
 
     // apply refund
     let ergs_remaining = ergs_remaining.add_no_overflow(cs, refund_value);
@@ -763,7 +767,7 @@ pub(crate) fn apply_log<
 
     diffs_accumulator
         .new_ergs_left_candidates
-        .push((should_apply, ergs_remaining));
+        .push((should_apply_opcode_base, ergs_remaining));
 
     assert!(STORAGE_READ_OPCODE.can_have_src0_from_mem(SUPPORTED_ISA_VERSION) == false);
     assert!(STORAGE_READ_OPCODE.can_write_dst0_into_memory(SUPPORTED_ISA_VERSION) == false);
@@ -784,6 +788,7 @@ pub(crate) fn apply_log<
     let exception = Boolean::multi_and(cs, &[decommit_versioned_hash_exception, should_apply]);
     diffs_accumulator.pending_exceptions.push(exception);
 
+    // NOTE - we use `should_apply`` here, because values are preselected above via `should_decommit` that requires `should_apply`
     diffs_accumulator.decommitment_queue_candidates.push((
         should_apply,
         new_decommit_queue_len,

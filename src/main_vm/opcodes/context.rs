@@ -81,7 +81,7 @@ pub(crate) fn apply_context<F: SmallField, CS: ConstraintSystem<F>>(
             .properties_bits
             .boolean_for_variant(GET_ERGS_LEFT_OPCODE)
     };
-    let _is_retrieve_sp = {
+    let is_retrieve_sp = {
         common_opcode_state
             .decoded_opcode
             .properties_bits
@@ -206,12 +206,10 @@ pub(crate) fn apply_context<F: SmallField, CS: ConstraintSystem<F>>(
         zkevm_opcode_defs::system_params::INTERNAL_ERGS_TO_VISIBLE_ERGS_CONVERSION_CONSTANT,
     );
 
-    let low_u32 = UInt32::conditionally_select(
-        cs,
-        is_retrieve_ergs_left,
-        &low_u32_ergs_left,
-        &low_u32_to_get_sp,
-    );
+    let low_u32 = UInt32::conditionally_select(cs, is_retrieve_sp, &low_u32_to_get_sp, &zero_u32);
+
+    let low_u32 =
+        UInt32::conditionally_select(cs, is_retrieve_ergs_left, &low_u32_ergs_left, &low_u32);
 
     // now we have context
 

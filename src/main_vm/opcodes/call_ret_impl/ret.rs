@@ -305,20 +305,33 @@ where
 
     // -----------------------------------------
 
+    // we should subtract stipend, but only if we exit local frame
+    let stipend_to_subtract = current_callstack_entry
+        .stipend
+        .mask_negated(cs, is_local_frame);
+    let (ergs_after_stipend_subtraction, uf) =
+        ergs_left_after_growth.overflowing_sub(cs, stipend_to_subtract);
+    let ergs_after_stipend_subtraction = ergs_after_stipend_subtraction.mask_negated(cs, uf);
+
+    // give the rest to the original caller
     let new_ergs_left =
-        ergs_left_after_growth.add_no_overflow(cs, new_callstack_entry.ergs_remaining);
+        ergs_after_stipend_subtraction.add_no_overflow(cs, new_callstack_entry.ergs_remaining);
 
     new_callstack_entry.ergs_remaining = new_ergs_left;
+    // NOTE: if we return from local frame (from near-call), then memory growth will not be triggered above,
+    // and so panic can not happen, and we can just propagate already existing heap bound
+    // to update a previous frame. If we return from the far-call then previous frame is not local, and we should
+    // not affect it's upper bound at all
     new_callstack_entry.heap_upper_bound = Selectable::conditionally_select(
         cs,
         is_local_frame,
-        &heap_bound,
+        &current_callstack_entry.heap_upper_bound,
         &new_callstack_entry.heap_upper_bound,
     );
     new_callstack_entry.aux_heap_upper_bound = Selectable::conditionally_select(
         cs,
         is_local_frame,
-        &aux_heap_bound,
+        &current_callstack_entry.heap_upper_bound,
         &new_callstack_entry.aux_heap_upper_bound,
     );
 

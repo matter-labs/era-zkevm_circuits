@@ -424,6 +424,12 @@ where
     };
     let target_is_userspace = target_is_kernel.negated(cs);
 
+    if crate::config::CIRCUIT_VERSOBE {
+        if (execute.witness_hook(&*cs))().unwrap_or(false) {
+            dbg!(destination_address.witness_hook(cs)().unwrap());
+        }
+    }
+
     let mut far_call_abi = *far_call_abi;
 
     // convert ergs
@@ -441,8 +447,9 @@ where
             zero_u32,
             zero_u32,
         );
-        let overflow = high.is_zero(cs);
-        UInt32::conditionally_select(cs, overflow, &cap, &low)
+        let fits_u32 = high.is_zero(cs);
+
+        UInt32::conditionally_select(cs, fits_u32, &low, &cap)
     } else {
         unimplemented!()
     };
@@ -455,6 +462,7 @@ where
 
     if crate::config::CIRCUIT_VERSOBE {
         if execute.witness_hook(&*cs)().unwrap_or(false) {
+            dbg!(opcode_carry_parts.preliminary_ergs_left.witness_hook(&*cs)().unwrap());
             dbg!(forwarding_data.witness_hook(&*cs)().unwrap());
             dbg!(far_call_abi.witness_hook(&*cs)().unwrap());
         }
@@ -696,6 +704,7 @@ where
             dbg!(code_format_exception.witness_hook(&*cs)().unwrap());
             dbg!(fat_ptr_expected_exception.witness_hook(&*cs)().unwrap());
             dbg!(bytecode_hash_from_storage.witness_hook(&*cs)().unwrap());
+            dbg!(mask_to_default_aa.witness_hook(&*cs)().unwrap());
             dbg!(code_hash_length_in_words.witness_hook(&*cs)().unwrap());
             dbg!(normalized_preimage.witness_hook(&*cs)().unwrap());
         }
@@ -774,12 +783,16 @@ where
     let mut growth_cost = heap_growth.mask(cs, grow_heap);
     growth_cost = UInt32::conditionally_select(cs, grow_aux_heap, &aux_heap_growth, &growth_cost);
 
-    // if crate::config::CIRCUIT_VERSOBE {
-    //     if execute.witness_hook(&*cs)().unwrap() {
-    //         dbg!(opcode_carry_parts.preliminary_ergs_left.witness_hook(&*cs)().unwrap());
-    //         dbg!(growth_cost.witness_hook(&*cs)().unwrap());
-    //     }
-    // }
+    if crate::config::CIRCUIT_VERSOBE {
+        if execute.witness_hook(&*cs)().unwrap() {
+            dbg!(opcode_carry_parts.preliminary_ergs_left.witness_hook(&*cs)().unwrap());
+            dbg!(grow_heap.witness_hook(&*cs)().unwrap());
+            dbg!(heap_growth.witness_hook(&*cs)().unwrap());
+            dbg!(grow_aux_heap.witness_hook(&*cs)().unwrap());
+            dbg!(aux_heap_growth.witness_hook(&*cs)().unwrap());
+            dbg!(growth_cost.witness_hook(&*cs)().unwrap());
+        }
+    }
 
     let (ergs_left_after_growth, uf) = opcode_carry_parts
         .preliminary_ergs_left
@@ -791,11 +804,11 @@ where
     let ergs_left_after_growth = ergs_left_after_growth.mask_negated(cs, uf); // if not enough - set to 0
     exceptions.push(uf);
 
-    // if crate::config::CIRCUIT_VERSOBE {
-    //     if execute.witness_hook(&*cs)().unwrap() {
-    //         dbg!(ergs_left_after_growth.witness_hook(&*cs)().unwrap());
-    //     }
-    // }
+    if crate::config::CIRCUIT_VERSOBE {
+        if execute.witness_hook(&*cs)().unwrap() {
+            dbg!(ergs_left_after_growth.witness_hook(&*cs)().unwrap());
+        }
+    }
 
     current_callstack_entry.heap_upper_bound = UInt32::conditionally_select(
         cs,
@@ -816,16 +829,23 @@ where
     // - how much we just give to callee out of thin air
     // this is only true for system contracts, so we mask an efficient address
 
-    let address_low_masked = common_opcode_state.src1_view.u32x8_view[1].mask(cs, target_is_kernel);
+    let address_low = UInt16::from_le_bytes(
+        cs,
+        [
+            common_opcode_state.src1_view.u8x32_view[0],
+            common_opcode_state.src1_view.u8x32_view[1],
+        ],
+    );
+    let address_low_masked = address_low.mask(cs, target_is_kernel);
     let address_low_masked = address_low_masked.mask(cs, far_call_abi.system_call);
     let table_id = cs
         .get_table_id_for_marker::<CallCostsAndStipendsTable>()
         .expect("table of costs and stipends must exist");
-    let (default_extra_cost, default_stipend) =
+    let (default_stipend, default_extra_cost) =
         zkevm_opcode_defs::STIPENDS_AND_EXTRA_COSTS_TABLE[0];
     assert_eq!(default_extra_cost, 0);
     assert_eq!(default_stipend, 0);
-    let [extra_ergs_from_caller_to_callee, callee_stipend] =
+    let [callee_stipend, extra_ergs_from_caller_to_callee] =
         cs.perform_lookup::<1, 2>(table_id, &[address_low_masked.get_variable()]);
     let extra_ergs_from_caller_to_callee =
         unsafe { UInt32::from_variable_unchecked(extra_ergs_from_caller_to_callee) };
@@ -839,6 +859,16 @@ where
         &evm_simulator_stipend,
         &callee_stipend,
     );
+
+    if crate::config::CIRCUIT_VERSOBE {
+        if execute.witness_hook(&*cs)().unwrap() {
+            dbg!(address_low.witness_hook(&*cs)().unwrap());
+            dbg!(address_low_masked.witness_hook(&*cs)().unwrap());
+            dbg!(ergs_left_after_growth.witness_hook(&*cs)().unwrap());
+            dbg!(extra_ergs_from_caller_to_callee.witness_hook(&*cs)().unwrap());
+            dbg!(callee_stipend.witness_hook(&*cs)().unwrap());
+        }
+    }
 
     let (ergs_left_after_extra_costs, uf) =
         ergs_left_after_growth.overflowing_sub(cs, extra_ergs_from_caller_to_callee);
@@ -854,12 +884,13 @@ where
 
     let target_code_memory_page = default_target_memory_page.mask(cs, should_decommit);
 
-    // if crate::config::CIRCUIT_VERSOBE {
-    //     if execute.witness_hook(&*cs)().unwrap() {
-    //         dbg!(exception.witness_hook(&*cs)().unwrap());
-    //         dbg!(ergs_left_after_extra_costs.witness_hook(&*cs)().unwrap());
-    //     }
-    // }
+    if crate::config::CIRCUIT_VERSOBE {
+        if execute.witness_hook(&*cs)().unwrap() {
+            dbg!(extra_ergs_from_caller_to_callee.witness_hook(&*cs)().unwrap());
+            dbg!(exception.witness_hook(&*cs)().unwrap());
+            dbg!(ergs_left_after_extra_costs.witness_hook(&*cs)().unwrap());
+        }
+    }
 
     let (
         not_enough_ergs_to_decommit,
@@ -887,6 +918,7 @@ where
 
     if crate::config::CIRCUIT_VERSOBE {
         if execute.witness_hook(&*cs)().unwrap_or(false) {
+            dbg!(ergs_remaining_after_decommit.witness_hook(&*cs)().unwrap());
             dbg!(not_enough_ergs_to_decommit.witness_hook(&*cs)().unwrap());
             dbg!(exception.witness_hook(&*cs)().unwrap());
         }
@@ -1256,12 +1288,9 @@ where
     let target_is_porter_and_its_available =
         Boolean::multi_and(cs, &[*target_is_zkporter, *zkporter_is_available]);
     let target_is_rollup = target_is_zkporter.negated(cs);
-    let zkporter_is_not_available = zkporter_is_available.negated(cs);
 
     let can_read = Boolean::multi_or(cs, &[target_is_rollup, target_is_porter_and_its_available]);
     let should_read = Boolean::multi_and(cs, &[*should_execute, can_read]);
-    let needs_porter_mask =
-        Boolean::multi_and(cs, &[*target_is_zkporter, zkporter_is_not_available]);
 
     let zero_u32 = UInt32::zero(cs);
     let target_as_u256 = UInt256 {
@@ -1376,7 +1405,7 @@ where
     let bytecode_hash = code_hash_from_storage;
 
     let skip_read = should_read.negated(cs);
-    let map_page_to_trivial = Boolean::multi_or(cs, &[needs_porter_mask, skip_read]);
+    let map_page_to_trivial = skip_read;
 
     // now process the sponges on whether we did read
     let (new_forward_queue_tail, new_forward_queue_length) =
@@ -1647,8 +1676,13 @@ where
 
     if crate::config::CIRCUIT_VERSOBE {
         if should_decommit.witness_hook(&*cs)().unwrap() {
+            dbg!(ergs_remaining.witness_hook(&*cs)().unwrap());
             dbg!(num_words_in_bytecode.witness_hook(&*cs)().unwrap());
+            dbg!(default_cost_of_decommittment.witness_hook(&*cs)().unwrap());
+            dbg!(cost_of_decommittment.witness_hook(&*cs)().unwrap());
             dbg!(ergs_after_decommit_may_be.witness_hook(&*cs)().unwrap());
+            dbg!(should_decommit.witness_hook(&*cs)().unwrap());
+            dbg!(have_enough_ergs_to_decommit.witness_hook(&*cs)().unwrap());
             dbg!(ergs_remaining_after_decommit.witness_hook(&*cs)().unwrap());
         }
     }

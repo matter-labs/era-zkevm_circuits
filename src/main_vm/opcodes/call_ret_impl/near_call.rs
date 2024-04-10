@@ -117,8 +117,9 @@ where
             zero_u32,
             zero_u32,
         );
-        let overflow = high.is_zero(cs);
-        UInt32::conditionally_select(cs, overflow, &cap, &low)
+        let fits_u32 = high.is_zero(cs);
+
+        UInt32::conditionally_select(cs, fits_u32, &low, &cap)
     } else {
         unimplemented!()
     };
@@ -135,6 +136,14 @@ where
         &near_call_abi.ergs_passed,
     );
 
+    if crate::config::CIRCUIT_VERSOBE {
+        if (execute.witness_hook(&*cs))().unwrap_or(false) {
+            dbg!(preliminary_ergs_left.witness_hook(cs)().unwrap());
+            dbg!(near_call_abi.ergs_passed.witness_hook(cs)().unwrap());
+            dbg!(pass_all_ergs.witness_hook(cs)().unwrap());
+        }
+    }
+
     let (remaining_for_this_context, uf) = preliminary_ergs_left.overflowing_sub(cs, ergs_to_pass);
 
     let remaining_ergs_if_pass = remaining_for_this_context;
@@ -148,6 +157,13 @@ where
         UInt32::conditionally_select(cs, uf, &preliminary_ergs_left, &passed_ergs_if_pass);
 
     current_callstack_entry.ergs_remaining = remaining_ergs_if_pass;
+
+    if crate::config::CIRCUIT_VERSOBE {
+        if (execute.witness_hook(&*cs))().unwrap_or(false) {
+            dbg!(remaining_ergs_if_pass.witness_hook(cs)().unwrap());
+            dbg!(passed_ergs_if_pass.witness_hook(cs)().unwrap());
+        }
+    }
 
     let oracle = witness_oracle.clone();
     let mut dependencies = Vec::with_capacity(
