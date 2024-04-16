@@ -518,6 +518,13 @@ where
         );
     }
 
+    // global pubdata reverts counter can not be < 0
+    {
+        let le_bytes = new_state.pubdata_revert_counter.to_le_bytes(cs);
+        let is_negative = test_if_bit_is_set(cs, &le_bytes[3], 7);
+        Boolean::enforce_equal(cs, &is_negative, &boolean_false);
+    }
+
     // Heap limit
     for (flag, value) in diffs_accumulator.new_heap_bounds.drain(..) {
         new_state
