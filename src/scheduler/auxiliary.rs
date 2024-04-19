@@ -1,3 +1,5 @@
+use std::iter::once;
+
 use crate::fsm_input_output::circuit_inputs::INPUT_OUTPUT_COMMITMENT_LENGTH;
 
 use crate::fsm_input_output::commit_variable_length_encodable_item;
@@ -69,6 +71,11 @@ impl BaseLayerCircuitType {
                 panic!("unknown circuit type {}", value)
             }
         }
+    }
+
+    pub fn as_iter_u8() -> impl Iterator<Item = u8> {
+        (BaseLayerCircuitType::VM as u8..=BaseLayerCircuitType::Secp256r1Verify as u8)
+            .chain(once(BaseLayerCircuitType::EIP4844Repack as u8))
     }
 }
 
