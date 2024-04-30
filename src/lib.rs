@@ -25,6 +25,7 @@ pub mod keccak256_round_function;
 pub mod linear_hasher;
 pub mod log_sorter;
 pub mod main_vm;
+pub mod modexp;
 pub mod ram_permutation;
 pub mod recursion;
 pub mod scheduler;

@@ -264,7 +264,7 @@ where
         cs: &mut CS,
         p: &mut BN256SWProjectivePoint<F>,
         q: &mut BN256SWProjectivePointTwisted<F>,
-    ) -> Self {        
+    ) -> Self {
         // Verifying that q is normalized
         let q_is_normalized = q.is_normalized(cs);
         let boolean_true = Boolean::allocated_constant(cs, true);
