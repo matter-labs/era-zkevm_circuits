@@ -1,4 +1,3 @@
-
 pub mod test {
     use std::fs::File;
     use std::io::Read;
@@ -7,7 +6,11 @@ pub mod test {
     use boojum::config::DevCSConfig;
     use boojum::cs::cs_builder::{new_builder, CsBuilder, CsBuilderImpl};
     use boojum::cs::cs_builder_reference::CsReferenceImplementationBuilder;
-    use boojum::cs::gates::{BooleanConstraintGate, ConstantsAllocatorGate, DotProductGate, FmaGateInBaseFieldWithoutConstant, NopGate, ReductionGate, SelectionGate, U8x4FMAGate, UIntXAddGate, ZeroCheckGate};
+    use boojum::cs::gates::{
+        BooleanConstraintGate, ConstantsAllocatorGate, DotProductGate,
+        FmaGateInBaseFieldWithoutConstant, NopGate, ReductionGate, SelectionGate, U8x4FMAGate,
+        UIntXAddGate, ZeroCheckGate,
+    };
     use boojum::cs::implementations::reference_cs::CSReferenceImplementation;
     use boojum::cs::traits::cs::ConstraintSystem;
     use boojum::cs::traits::gate::GatePlacementStrategy;
@@ -15,7 +18,10 @@ pub mod test {
     use boojum::field::SmallField;
     use boojum::gadgets::boolean::Boolean;
     use boojum::gadgets::modexp::{modexp, modmul};
-    use boojum::gadgets::tables::{create_and8_table, create_byte_split_table, create_xor8_table, And8Table, ByteSplitTable, Xor8Table};
+    use boojum::gadgets::tables::{
+        create_and8_table, create_byte_split_table, create_xor8_table, And8Table, ByteSplitTable,
+        Xor8Table,
+    };
     use boojum::gadgets::u256::UInt256;
     use lazy_static::lazy_static;
     use serde::{Deserialize, Serialize};
@@ -25,7 +31,9 @@ pub mod test {
     use boojum::gadgets::traits::witnessable::WitnessHookable;
     use boojum::pairing::ff::{Field, PrimeField};
 
-    use crate::modexp::tests_json::{ModexpTestCase, ModmulTestCase, MODEXP_TEST_CASES, MODMUL_TEST_CASES};
+    use crate::modexp::tests_json::{
+        ModexpTestCase, ModmulTestCase, MODEXP_TEST_CASES, MODMUL_TEST_CASES,
+    };
 
     type F = GoldilocksField;
     type P = GoldilocksField;
@@ -110,8 +118,10 @@ pub mod test {
                 GatePlacementStrategy::UseGeneralPurposeColumns,
             );
             // let owned_cs = DotProductGate::<4>::configure_for_cs(owned_cs, GatePlacementStrategy::UseSpecializedColumns { num_repetitions: 1, share_constants: true });
-            let builder =
-                NopGate::configure_builder(builder, GatePlacementStrategy::UseGeneralPurposeColumns);
+            let builder = NopGate::configure_builder(
+                builder,
+                GatePlacementStrategy::UseGeneralPurposeColumns,
+            );
 
             builder
         }
@@ -142,11 +152,10 @@ pub mod test {
         owned_cs
     }
 
-    fn assert_equal_uint256<CS>(
-        cs: &mut CS,
-        a: &UInt256<F>,
-        b: &UInt256<F>,
-    ) where CS: ConstraintSystem<F> {
+    fn assert_equal_uint256<CS>(cs: &mut CS, a: &UInt256<F>, b: &UInt256<F>)
+    where
+        CS: ConstraintSystem<F>,
+    {
         let equals = UInt256::equals(cs, a, b);
         let boolean_true = Boolean::allocated_constant(cs, true);
         Boolean::enforce_equal(cs, &equals, &boolean_true);
