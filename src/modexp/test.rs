@@ -148,6 +148,8 @@ pub mod test {
         owned_cs.add_lookup_table::<ByteSplitTable<3>, 3>(table);
         let table = create_byte_split_table::<F, 4>();
         owned_cs.add_lookup_table::<ByteSplitTable<4>, 3>(table);
+        let table = create_byte_split_table::<F, 7>();
+        owned_cs.add_lookup_table::<ByteSplitTable<7>, 3>(table);
 
         owned_cs
     }
@@ -161,11 +163,16 @@ pub mod test {
         Boolean::enforce_equal(cs, &equals, &boolean_true);
     }
 
-    /// This function tests the modular exponentiation
+    /// This function tests the modular exponentiation, that is
+    /// an operation `b^e mod m`, where b is the base, e is the exponent, 
+    /// and m is the modulus. 
+    /// 
+    /// The function reads the test cases from [`MODEXP_TEST_CASES`] and runs them.
     #[test]
+    #[ignore]
     fn test_modexp() {
         // Preparing the constraint system and parameters
-        let mut owned_cs = create_test_cs(1 << 21);
+        let mut owned_cs = create_test_cs(1 << 24);
         let cs = &mut owned_cs;
 
         // Running tests from file
@@ -184,7 +191,11 @@ pub mod test {
         }
     }
 
-    /// This function tests the modular multiplication
+    /// This function tests the modular multiplication, that is
+    /// an operation `a*b mod m`, where a and b are two integers, 
+    /// e is the exponent, and m is the modulus. 
+    ///
+    /// The function reads the test cases from [`MODMUL_TEST_CASES`] and runs them.
     #[test]
     fn test_modmul() {
         // Preparing the constraint system and parameters

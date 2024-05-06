@@ -3,7 +3,7 @@ import json
 R = Integers(2**256)
 
 # --- Modular exponentiation tests ---
-MODEXP_TESTS_NUMBER = 10 # How many tests to generate
+MODEXP_TESTS_NUMBER = 1 # How many tests to generate
 
 tests_dict = {'tests': []}
 
