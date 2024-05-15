@@ -487,6 +487,7 @@ where
 
     if crate::config::CIRCUIT_VERSOBE {
         if execute.witness_hook(cs)().unwrap() {
+            dbg!(update_specific_registers_on_ret.witness_hook(cs)().unwrap());
             dbg!(current_callstack_entry.total_pubdata_spent.witness_hook(cs)().unwrap());
             dbg!(originally_popped_context
                 .total_pubdata_spent

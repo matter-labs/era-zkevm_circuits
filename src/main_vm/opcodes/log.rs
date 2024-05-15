@@ -450,6 +450,10 @@ pub(crate) fn apply_log<
     let extra_cost =
         UInt32::conditionally_select(cs, is_decommit, &cost_of_decommit_call, &extra_cost);
 
+    if crate::config::CIRCUIT_VERSOBE {
+        dbg!(extra_cost.witness_hook(cs)().unwrap());
+    }
+
     let (ergs_remaining, uf) = opcode_carry_parts
         .preliminary_ergs_left
         .overflowing_sub(cs, extra_cost);
@@ -693,18 +697,16 @@ pub(crate) fn apply_log<
         is_pointer: boolean_true,
     };
     // or it's empty if decommit didn't work
-    let decommit_failed = Boolean::multi_or(
-        cs,
-        &[decommit_versioned_hash_exception, not_enough_ergs_for_op],
-    );
-    dst_0_for_decommit.conditionally_erase(cs, decommit_failed);
+    dst_0_for_decommit.conditionally_erase(cs, decommit_versioned_hash_exception);
 
-    let selected_dst_0_value = VMRegister::conditionally_select(
+    // NOTE: if any of the ops that update DST0 fails, then we write exactly empty register (failing here is only "out of ergs")
+    let mut selected_dst_0_value = VMRegister::conditionally_select(
         cs,
         is_decommit,
         &dst_0_for_decommit,
         &dst0_for_io_ops_and_precompile_call,
     );
+    selected_dst_0_value.conditionally_erase(cs, not_enough_ergs_for_op);
 
     let old_forward_queue_length = draft_vm_state
         .callstack
@@ -736,7 +738,9 @@ pub(crate) fn apply_log<
     );
 
     let can_update_dst0 = Boolean::multi_or(cs, &[is_nonrevertable_io, is_decommit]);
-    let should_update_dst0 = Boolean::multi_and(cs, &[can_update_dst0, should_apply]);
+    // NOTE: here it's `should_apply_opcode_base` because write should always happen, but we have
+    // selected a proper value above in case if there was an exception
+    let should_update_dst0 = Boolean::multi_and(cs, &[can_update_dst0, should_apply_opcode_base]);
 
     if crate::config::CIRCUIT_VERSOBE {
         if should_apply.witness_hook(&*cs)().unwrap() {

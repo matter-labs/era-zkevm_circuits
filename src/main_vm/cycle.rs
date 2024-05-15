@@ -53,6 +53,13 @@ where
         dbg!(_current_state.pending_exception);
         dbg!(_current_state.callstack.current_context.saved_context.pc);
         dbg!(_current_state.flags);
+        dbg!(
+            _current_state
+                .callstack
+                .current_context
+                .saved_context
+                .ergs_remaining
+        );
     }
 
     let (draft_next_state, common_opcode_state, opcode_carry_parts) =
@@ -828,7 +835,7 @@ where
     if crate::config::CIRCUIT_VERSOBE {
         // synchronization point
         let _wit = new_state.witness_hook(&*cs)().unwrap();
-        // dbg!(_wit.memory_queue_state);
+        dbg!(_wit.registers);
         // dbg!(_wit.memory_queue_length);
         println!("End of cycle");
     }

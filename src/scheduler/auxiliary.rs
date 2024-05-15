@@ -50,7 +50,7 @@ pub enum BaseLayerCircuitType {
 
 impl BaseLayerCircuitType {
     pub fn from_numeric_value(value: u8) -> Self {
-        match value {
+        let t: Self = match value {
             a if a == Self::VM as u8 => Self::VM,
             a if a == Self::DecommitmentsFilter as u8 => Self::DecommitmentsFilter,
             a if a == Self::Decommiter as u8 => Self::Decommiter,
@@ -68,9 +68,11 @@ impl BaseLayerCircuitType {
             a if a == Self::Secp256r1Verify as u8 => Self::Secp256r1Verify,
             a if a == Self::EIP4844Repack as u8 => Self::EIP4844Repack,
             _ => {
-                panic!("unknown circuit type {}", value)
+                panic!("unknown circuit type {}", value);
             }
-        }
+        };
+
+        t
     }
 
     pub fn as_iter_u8() -> impl Iterator<Item = u8> {
