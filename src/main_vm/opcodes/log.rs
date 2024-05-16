@@ -451,7 +451,9 @@ pub(crate) fn apply_log<
         UInt32::conditionally_select(cs, is_decommit, &cost_of_decommit_call, &extra_cost);
 
     if crate::config::CIRCUIT_VERSOBE {
-        dbg!(extra_cost.witness_hook(cs)().unwrap());
+        if (should_apply_opcode_base.witness_hook(&*cs))().unwrap_or(false) {
+            dbg!(extra_cost.witness_hook(cs)().unwrap());
+        }
     }
 
     let (ergs_remaining, uf) = opcode_carry_parts
@@ -633,6 +635,12 @@ pub(crate) fn apply_log<
     decommittment_request.is_first = is_first;
     decommittment_request.page = suggested_page;
 
+    if crate::config::CIRCUIT_VERSOBE {
+        if (should_apply_opcode_base.witness_hook(&*cs))().unwrap_or(false) {
+            dbg!(is_first.witness_hook(cs)().unwrap());
+        }
+    }
+
     // form new candidate of decommit queue
     let mut sponge_relations_for_decommit = ArrayVec::<
         (
@@ -656,6 +664,12 @@ pub(crate) fn apply_log<
     // otherwise there was out of ergs above and
     let decommit_refund = cost_of_decommit_call.mask_negated(cs, is_first);
     let decommit_refund = decommit_refund.mask(cs, should_decommit);
+
+    if crate::config::CIRCUIT_VERSOBE {
+        if (should_apply_opcode_base.witness_hook(&*cs))().unwrap_or(false) {
+            dbg!(decommit_refund.witness_hook(cs)().unwrap());
+        }
+    }
 
     // NOTE: cold_warm_access_ergs_refund is already masked if it's not a storage access
     let refund_value = UInt32::conditionally_select(
@@ -789,8 +803,8 @@ pub(crate) fn apply_log<
         sponge_relations_for_decommit,
     ));
 
-    let exception = Boolean::multi_and(cs, &[decommit_versioned_hash_exception, should_apply]);
-    diffs_accumulator.pending_exceptions.push(exception);
+    // NOTE: out of circuit implementation does NOT set pending here and instead just burns ergs,
+    // that is equivalent behavior
 
     // NOTE - we use `should_apply`` here, because values are preselected above via `should_decommit` that requires `should_apply`
     diffs_accumulator.decommitment_queue_candidates.push((
