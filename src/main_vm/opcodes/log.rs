@@ -481,6 +481,11 @@ pub(crate) fn apply_log<
         &precompile_call_pubdata_cost,
         &final_pubdata_cost,
     );
+    let final_pubdata_cost = final_pubdata_cost.mask(cs, should_apply_io);
+    if crate::config::CIRCUIT_VERSOBE {
+        dbg!(final_pubdata_cost.witness_hook(cs)().unwrap());
+    }
+
     // NOTE: this intrinsic L1 message used L1 calldata, while our counter is for pubdata that can be propagated
     // by some other way, so we do NOT add it here
 

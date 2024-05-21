@@ -334,15 +334,6 @@ where
 
     // we need a completely fresh one
     let mut new_callstack_entry = ExecutionContextRecord::uninitialized(cs);
-    // apply memory stipends right away
-    new_callstack_entry.heap_upper_bound = UInt32::allocated_constant(
-        cs,
-        zkevm_opcode_defs::system_params::NEW_FRAME_MEMORY_STIPEND,
-    );
-    new_callstack_entry.aux_heap_upper_bound = UInt32::allocated_constant(
-        cs,
-        zkevm_opcode_defs::system_params::NEW_FRAME_MEMORY_STIPEND,
-    );
 
     // now also create target for mimic
     let implicit_mimic_call_reg = draft_vm_state.registers
