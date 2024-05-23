@@ -94,9 +94,7 @@ pub fn create_prestate<
         dbg!(execution_has_ended.witness_hook(&*cs)().unwrap());
     }
 
-    // we should even try to perform a read only if we have something to do this cycle
-    let should_try_to_read_opcode = execute_cycle.mask_negated(cs, pending_exception);
-
+    // NOTE: even if we have pending exception, we should still read and cache opcode to avoid caching problems
     let execute_pending_exception_at_this_cycle = pending_exception;
 
     // take down the flag
@@ -113,7 +111,7 @@ pub fn create_prestate<
     let (super_pc, subpc_spread) = split_pc(cs, current_pc);
     let previous_super_pc = current_state.previous_super_pc;
 
-    let should_read_for_new_pc = should_read_memory(
+    let refresh_opcode_cache = should_read_memory(
         cs,
         current_state.previous_code_page,
         current_state
@@ -125,9 +123,9 @@ pub fn create_prestate<
         previous_super_pc,
     );
 
-    let should_read_opcode =
-        Boolean::multi_and(cs, &[should_try_to_read_opcode, should_read_for_new_pc]);
-
+    // In normal execution if we do not skip cycle then we read opcode based on PC and page.
+    // If we have pending exception we should do it too in case if next PC hits the cache
+    let should_read_opcode = Boolean::multi_and(cs, &[refresh_opcode_cache, execute_cycle]);
     // and in addition if we did finish execution then we never care and cleanup
 
     let location = MemoryLocation {

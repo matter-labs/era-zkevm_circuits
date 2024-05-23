@@ -1065,34 +1065,51 @@ impl<F: SmallField> QuasiFatPtrInUMA<F> {
             Boolean::multi_and(cs, &[offset_is_beyond_the_slice, is_fat_ptr]);
 
         // 0 of it's heap/aux heap, otherwise use what we have
+        let is_heap_offset = is_fat_ptr.negated(cs);
         let formal_start = start.mask(cs, is_fat_ptr);
         // by prevalidating fat pointer we know that there is no overflow here,
         // so we ignore the information
         let (absolute_address, _of) = formal_start.overflowing_add(cs, offset);
 
         let u32_constant_32 = UInt32::allocated_constant(cs, 32);
-
-        let (incremented_offset, is_non_addressable) = offset.overflowing_add(cs, u32_constant_32);
-
         // check that we agree in logic with out-of-circuit comparisons
         debug_assert_eq!(
             zkevm_opcode_defs::uma::MAX_OFFSET_TO_DEREF_LOW_U32 + 32u32,
             u32::MAX
         );
+
+        // check that offset <= MAX_OFFSET_TO_DEREF. For that we add 32 to offset and can either trigger overflow, or compare the result
+        // with u32::MAX
+
+        let (incremented_offset, offset_overflow) = offset.overflowing_add(cs, u32_constant_32);
         let max_offset = UInt32::allocated_constant(cs, u32::MAX);
         let is_non_addressable_extra = UInt32::equals(cs, &incremented_offset, &max_offset);
 
         let is_non_addressable =
-            Boolean::multi_or(cs, &[is_non_addressable, is_non_addressable_extra]);
+            Boolean::multi_or(cs, &[offset_overflow, is_non_addressable_extra]);
+        let is_non_addressable_heap_offset =
+            Boolean::multi_and(cs, &[is_non_addressable, is_heap_offset]);
 
-        let should_set_panic = Boolean::multi_or(cs, &[already_panicked, is_non_addressable]);
+        // but on overflow we would still have to panic even if it's a pointer operation
+        // NOTE: it's an offset as an absolute value, so if fat pointer's offset is not in slice as checked above is one statment,
+        // and offset overflow is another
+
+        let should_set_panic = Boolean::multi_or(
+            cs,
+            &[
+                already_panicked,
+                is_non_addressable_heap_offset,
+                offset_overflow,
+            ],
+        );
 
         let skip_memory_access = Boolean::multi_or(
             cs,
             &[
                 already_panicked,
                 skip_if_legitimate_fat_ptr,
-                is_non_addressable,
+                is_non_addressable_heap_offset,
+                offset_overflow,
             ],
         );
 
@@ -1107,12 +1124,16 @@ impl<F: SmallField> QuasiFatPtrInUMA<F> {
         let bytes_to_cleanup_out_of_bounds =
             unsafe { UInt8::from_variable_unchecked(bytes_out_of_bound.get_variable()) };
 
+        // penalize for too high offset on heap - it happens exactly if offset overflows,
+        // or incremented is == u32::MAX, in case we access heap
+        let heap_deref_out_of_bounds = is_non_addressable_heap_offset;
+
         let new = Self {
             absolute_address,
             page_candidate: page,
             incremented_offset,
-            heap_deref_out_of_bounds: is_non_addressable,
-            skip_memory_access: skip_memory_access,
+            heap_deref_out_of_bounds,
+            skip_memory_access,
             should_set_panic,
             bytes_to_cleanup_out_of_bounds,
         };

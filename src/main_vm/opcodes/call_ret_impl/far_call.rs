@@ -418,6 +418,7 @@ where
     if crate::config::CIRCUIT_VERSOBE {
         if (execute.witness_hook(&*cs))().unwrap_or(false) {
             dbg!(destination_address.witness_hook(cs)().unwrap());
+            dbg!(target_is_kernel.witness_hook(cs)().unwrap());
         }
     }
 
@@ -514,6 +515,11 @@ where
     // into memory, or will just use UNMAPPED_PAGE
     let mut exceptions = ArrayVec::<Boolean<F>, 6>::new();
     exceptions.push(call_to_unreachable);
+    if crate::config::CIRCUIT_VERSOBE {
+        if execute.witness_hook(&*cs)().unwrap() {
+            dbg!(call_to_unreachable.witness_hook(&*cs)().unwrap());
+        }
+    }
 
     // now we should do validation BEFORE decommittment
     let zero_u32 = UInt32::zero(cs);
@@ -617,6 +623,13 @@ where
     let exception_over_empty_bytecode =
         Boolean::multi_and(cs, &[bytecode_is_empty, target_is_kernel]);
 
+    if crate::config::CIRCUIT_VERSOBE {
+        if execute.witness_hook(&*cs)().unwrap() {
+            dbg!(exception_over_native_bytecode_format.witness_hook(&*cs)().unwrap());
+            dbg!(exception_over_evm_simulator_bytecode_format.witness_hook(&*cs)().unwrap());
+            dbg!(exception_over_empty_bytecode.witness_hook(&*cs)().unwrap());
+        }
+    }
     let code_format_exception = Boolean::multi_or(
         cs,
         &[
@@ -658,6 +671,11 @@ where
     );
 
     exceptions.push(code_format_exception);
+    if crate::config::CIRCUIT_VERSOBE {
+        if execute.witness_hook(&*cs)().unwrap() {
+            dbg!(code_format_exception.witness_hook(&*cs)().unwrap());
+        }
+    }
 
     // normalize bytecode hash
     let mut normalized_preimage = masked_bytecode_hash;
@@ -672,27 +690,52 @@ where
     let fat_ptr_expected_exception =
         Boolean::multi_and(cs, &[forward_fat_pointer, src0_is_integer]);
     exceptions.push(fat_ptr_expected_exception);
+    if crate::config::CIRCUIT_VERSOBE {
+        if execute.witness_hook(&*cs)().unwrap() {
+            dbg!(fat_ptr_expected_exception.witness_hook(&*cs)().unwrap());
+        }
+    }
+
     let non_pointer_expected_exception = Boolean::multi_and(
         cs,
         &[do_not_forward_ptr, common_opcode_state.src0_view.is_ptr],
     );
     exceptions.push(non_pointer_expected_exception);
+    if crate::config::CIRCUIT_VERSOBE {
+        if execute.witness_hook(&*cs)().unwrap() {
+            dbg!(non_pointer_expected_exception.witness_hook(&*cs)().unwrap());
+        }
+    }
 
     // add pointer validation cases
     exceptions.push(common_abi_parts.ptr_validation_data.generally_invalid);
+    if crate::config::CIRCUIT_VERSOBE {
+        if execute.witness_hook(&*cs)().unwrap() {
+            dbg!(common_abi_parts
+                .ptr_validation_data
+                .generally_invalid
+                .witness_hook(&*cs)()
+            .unwrap());
+        }
+    }
     exceptions.push(common_abi_parts.ptr_validation_data.is_non_addressable);
+    if crate::config::CIRCUIT_VERSOBE {
+        if execute.witness_hook(&*cs)().unwrap() {
+            dbg!(common_abi_parts
+                .ptr_validation_data
+                .is_non_addressable
+                .witness_hook(&*cs)()
+            .unwrap());
+        }
+    }
 
     let exceptions_collapsed = Boolean::multi_or(cs, &exceptions);
 
     if crate::config::CIRCUIT_VERSOBE {
         if execute.witness_hook(&*cs)().unwrap() {
-            dbg!(call_to_unreachable.witness_hook(&*cs)().unwrap());
-            dbg!(exception_over_native_bytecode_format.witness_hook(&*cs)().unwrap());
-            dbg!(exception_over_evm_simulator_bytecode_format.witness_hook(&*cs)().unwrap());
-            dbg!(exception_over_empty_bytecode.witness_hook(&*cs)().unwrap());
+            dbg!(exceptions_collapsed.witness_hook(&*cs)().unwrap());
             dbg!(can_call_native_without_masking.witness_hook(&*cs)().unwrap());
             dbg!(can_call_evm_simulator_without_masking.witness_hook(&*cs)().unwrap());
-            dbg!(code_format_exception.witness_hook(&*cs)().unwrap());
             dbg!(fat_ptr_expected_exception.witness_hook(&*cs)().unwrap());
             dbg!(bytecode_hash_from_storage.witness_hook(&*cs)().unwrap());
             dbg!(mask_to_default_aa.witness_hook(&*cs)().unwrap());
@@ -873,7 +916,8 @@ where
     let valid_execution = exception.negated(cs);
     let should_decommit = Boolean::multi_and(cs, &[execute, valid_execution]);
 
-    let target_code_memory_page = default_target_memory_page.mask(cs, should_decommit);
+    // We will have a logic of `add_to_decommittment_queue` set it to 0 at the very end if exceptions would happen
+    let target_code_memory_page = default_target_memory_page;
 
     if crate::config::CIRCUIT_VERSOBE {
         if execute.witness_hook(&*cs)().unwrap() {
@@ -950,12 +994,6 @@ where
     let dst_pc = UInt16::zero(cs);
     let eh_pc = common_opcode_state.decoded_opcode.imm0;
 
-    // if crate::config::CIRCUIT_VERSOBE {
-    //     if execute.witness_hook(&*cs)().unwrap() {
-    //         dbg!(ergs_remaining_after_decommit.witness_hook(&*cs)().unwrap());
-    //     }
-    // }
-
     // now we should resolve all passed ergs. That means
     // that we have to read it from ABI, and then use 63/64 rule
     let preliminary_ergs_left = ergs_remaining_after_decommit;
@@ -969,21 +1007,49 @@ where
         .mul(cs, &Num::from_variable(constant_63.get_variable()));
     let max_passable = unsafe { UInt32::from_variable_unchecked(max_passable.get_variable()) };
 
+    if crate::config::CIRCUIT_VERSOBE {
+        if execute.witness_hook(&*cs)().unwrap_or(false) {
+            dbg!(max_passable.witness_hook(&*cs)().unwrap());
+        }
+    }
+
     // max passable is <= preliminary_ergs_left from computations above, so it's also safe
     let leftover = Num::from_variable(preliminary_ergs_left.get_variable())
         .sub(cs, &Num::from_variable(max_passable.get_variable()));
     let leftover = unsafe { UInt32::from_variable_unchecked(leftover.get_variable()) };
     let ergs_to_pass = far_call_abi.ergs_passed;
 
+    if crate::config::CIRCUIT_VERSOBE {
+        if execute.witness_hook(&*cs)().unwrap_or(false) {
+            dbg!(leftover.witness_hook(&*cs)().unwrap());
+            dbg!(ergs_to_pass.witness_hook(&*cs)().unwrap());
+        }
+    }
+
     let (remaining_from_max_passable, uf) = max_passable.overflowing_sub(cs, ergs_to_pass);
     // this one can overflow IF one above underflows, but we are not interested in it's overflow value
     let (leftover_and_remaining_if_no_uf, _of) =
         leftover.overflowing_add(cs, remaining_from_max_passable);
 
-    let ergs_to_pass = UInt32::conditionally_select(cs, uf, &max_passable, &ergs_to_pass);
+    if crate::config::CIRCUIT_VERSOBE {
+        if execute.witness_hook(&*cs)().unwrap_or(false) {
+            dbg!(remaining_from_max_passable.witness_hook(&*cs)().unwrap());
+            dbg!(leftover_and_remaining_if_no_uf.witness_hook(&*cs)().unwrap());
+        }
+    }
 
+    let ergs_to_pass = UInt32::conditionally_select(cs, uf, &max_passable, &ergs_to_pass);
     let remaining_for_this_context =
         UInt32::conditionally_select(cs, uf, &leftover, &leftover_and_remaining_if_no_uf);
+
+    if crate::config::CIRCUIT_VERSOBE {
+        if execute.witness_hook(&*cs)().unwrap_or(false) {
+            dbg!(ergs_to_pass.witness_hook(&*cs)().unwrap());
+            dbg!(remaining_for_this_context.witness_hook(&*cs)().unwrap());
+            dbg!(extra_ergs_from_caller_to_callee.witness_hook(&*cs)().unwrap());
+            dbg!(callee_stipend.witness_hook(&*cs)().unwrap());
+        }
+    }
 
     let remaining_ergs_if_pass = remaining_for_this_context;
     let passed_ergs_if_pass = ergs_to_pass;
@@ -1281,6 +1347,8 @@ where
     let target_is_rollup = target_is_zkporter.negated(cs);
 
     let can_read = Boolean::multi_or(cs, &[target_is_rollup, target_is_porter_and_its_available]);
+    let call_to_unreachable = can_read.negated(cs);
+
     let should_read = Boolean::multi_and(cs, &[*should_execute, can_read]);
 
     let zero_u32 = UInt32::zero(cs);
@@ -1395,9 +1463,6 @@ where
 
     let bytecode_hash = code_hash_from_storage;
 
-    let skip_read = should_read.negated(cs);
-    let map_page_to_trivial = skip_read;
-
     // now process the sponges on whether we did read
     let (new_forward_queue_tail, new_forward_queue_length) =
         construct_hash_relations_code_hash_read(
@@ -1418,7 +1483,7 @@ where
     );
 
     (
-        map_page_to_trivial,
+        call_to_unreachable,
         bytecode_hash,
         (new_forward_queue_tail, new_forward_queue_length),
     )
@@ -1646,13 +1711,23 @@ where
     );
 
     let is_first = UInt32::equals(cs, &target_memory_page, &suggested_page);
+    let should_charge_for_decommit = Boolean::multi_and(cs, &[*should_decommit, is_first]);
 
     decommittment_request.is_first = is_first;
     decommittment_request.page = suggested_page;
 
     // kind of refund if we didn't decommit
 
-    let cost_of_decommittment = default_cost_of_decommittment.mask(cs, is_first);
+    let cost_of_decommittment = default_cost_of_decommittment.mask(cs, should_charge_for_decommit);
+
+    if crate::config::CIRCUIT_VERSOBE {
+        if should_decommit.witness_hook(&*cs)().unwrap_or(false) {
+            dbg!(target_memory_page.witness_hook(&*cs)().unwrap());
+            dbg!(suggested_page.witness_hook(&*cs)().unwrap());
+            dbg!(default_cost_of_decommittment.witness_hook(&*cs)().unwrap());
+            dbg!(cost_of_decommittment.witness_hook(&*cs)().unwrap());
+        }
+    }
 
     let (ergs_after_decommit_may_be, uf) =
         ergs_remaining.overflowing_sub(cs, cost_of_decommittment);
