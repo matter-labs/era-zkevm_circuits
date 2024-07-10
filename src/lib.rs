@@ -14,6 +14,7 @@ pub use boojum::ethereum_types;
 pub mod config;
 
 pub mod base_structures;
+pub mod bn254;
 pub mod code_unpacker_sha256;
 pub mod demux_log_queue;
 pub mod ecrecover;
@@ -23,6 +24,7 @@ pub mod keccak256_round_function;
 pub mod linear_hasher;
 pub mod log_sorter;
 pub mod main_vm;
+pub mod modexp;
 pub mod ram_permutation;
 pub mod recursion;
 pub mod scheduler;

@@ -1,0 +1,10 @@
+{
+    "tests": [
+        {
+            "base": "0x8f3b7d5c187f8abbe0581dab5a37644febd35ea6d4fe3213288f9d63ab82a6b1",
+            "exponent": "0xafa9888e351dfdefd862945b0da33c9ea1de907ae830292438df1fa184447777",
+            "modulus": "0xc7e38934b1501e64e5c0bd0ab35b3354520b6e88b81a1f063c37007c65b7efd5",
+            "expected": "0x45682b037d21d235bd0ed6103ce2674e5c8e983a88bfd09c847a6324e77c1ad6"
+        }
+    ]
+}

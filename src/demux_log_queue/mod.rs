@@ -50,9 +50,13 @@ pub enum DemuxOutput {
     ECRecover,
     Secp256r1Verify,
     TransientStorage,
+    ECAdd,
+    ECMul,
+    ECPairing,
+    Modexp,
 }
 
-pub const NUM_DEMUX_OUTPUTS: usize = DemuxOutput::TransientStorage as usize + 1;
+pub const NUM_DEMUX_OUTPUTS: usize = DemuxOutput::Modexp as usize + 1;
 
 pub const ALL_DEMUX_OUTPUTS: [DemuxOutput; NUM_DEMUX_OUTPUTS] = [
     DemuxOutput::RollupStorage,
@@ -64,6 +68,10 @@ pub const ALL_DEMUX_OUTPUTS: [DemuxOutput; NUM_DEMUX_OUTPUTS] = [
     DemuxOutput::ECRecover,
     DemuxOutput::Secp256r1Verify,
     DemuxOutput::TransientStorage,
+    DemuxOutput::ECAdd,
+    DemuxOutput::ECMul,
+    DemuxOutput::ECPairing,
+    DemuxOutput::Modexp,
 ];
 
 impl DemuxOutput {
@@ -90,6 +98,10 @@ impl DemuxOutput {
             Self::Sha256 => Some(*zkevm_opcode_defs::system_params::SHA256_ROUND_FUNCTION_PRECOMPILE_FORMAL_ADDRESS),
             Self::ECRecover => Some(*zkevm_opcode_defs::system_params::ECRECOVER_INNER_FUNCTION_PRECOMPILE_FORMAL_ADDRESS),
             Self::Secp256r1Verify => Some(*zkevm_opcode_defs::system_params::SECP256R1_VERIFY_INNER_FUNCTION_PRECOMPILE_FORMAL_ADDRESS),
+            Self::ECAdd => Some(*zkevm_opcode_defs::system_params::ECADD_PRECOMPILE_FORMAL_ADDRESS),
+            Self::ECMul => Some(*zkevm_opcode_defs::system_params::ECMUL_PRECOMPILE_FORMAL_ADDRESS),
+            Self::ECPairing => Some(*zkevm_opcode_defs::system_params::ECPAIRING_PRECOMPILE_FORMAL_ADDRESS),
+            Self::Modexp => Some(*zkevm_opcode_defs::system_params::MODEXP_PRECOMPILE_FORMAL_ADDRESS),
             _ => None,
         }
     }
