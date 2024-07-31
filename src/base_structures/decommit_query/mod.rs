@@ -11,13 +11,21 @@ use boojum::gadgets::traits::allocatable::CSPlaceholder;
 use boojum::gadgets::traits::allocatable::{CSAllocatable, CSAllocatableExt};
 use boojum::gadgets::traits::castable::WitnessCastable;
 use boojum::gadgets::traits::encodable::CircuitVarLengthEncodable;
+use boojum::gadgets::traits::encodable::WitnessVarLengthEncodable;
 use boojum::gadgets::traits::encodable::{CircuitEncodable, CircuitEncodableExt};
 use boojum::gadgets::traits::selectable::Selectable;
 use boojum::gadgets::traits::witnessable::WitnessHookable;
 use boojum::gadgets::u32::UInt32;
 use boojum::{field::SmallField, gadgets::u256::UInt256};
 
-#[derive(Derivative, CSAllocatable, CSSelectable, WitnessHookable, CSVarLengthEncodable)]
+#[derive(
+    Derivative,
+    CSAllocatable,
+    CSSelectable,
+    WitnessHookable,
+    CSVarLengthEncodable,
+    WitVarLengthEncodable,
+)]
 #[derivative(Clone, Copy, Debug)]
 pub struct DecommitQuery<F: SmallField> {
     pub code_hash: UInt256<F>,

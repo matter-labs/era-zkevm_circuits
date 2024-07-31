@@ -12,7 +12,8 @@ use boojum::{
         num::*,
         queue::*,
         traits::{
-            allocatable::*, encodable::CircuitVarLengthEncodable, selectable::Selectable,
+            allocatable::*, encodable::CircuitVarLengthEncodable,
+            encodable::WitnessVarLengthEncodable, selectable::Selectable,
             witnessable::WitnessHookable,
         },
         u160::*,
@@ -31,7 +32,14 @@ use super::TimestampedStorageLogRecord;
 
 // FSM
 
-#[derive(Derivative, CSAllocatable, CSSelectable, CSVarLengthEncodable, WitnessHookable)]
+#[derive(
+    Derivative,
+    CSAllocatable,
+    CSSelectable,
+    CSVarLengthEncodable,
+    WitnessHookable,
+    WitVarLengthEncodable,
+)]
 #[derivative(Clone, Copy, Debug)]
 #[DerivePrettyComparison("true")]
 pub struct StorageDeduplicatorFSMInputOutput<F: SmallField> {
@@ -79,7 +87,14 @@ impl<F: SmallField> CSPlaceholder<F> for StorageDeduplicatorFSMInputOutput<F> {
     }
 }
 
-#[derive(Derivative, CSAllocatable, CSSelectable, CSVarLengthEncodable, WitnessHookable)]
+#[derive(
+    Derivative,
+    CSAllocatable,
+    CSSelectable,
+    CSVarLengthEncodable,
+    WitnessHookable,
+    WitVarLengthEncodable,
+)]
 #[derivative(Clone, Debug)]
 pub struct StorageDeduplicatorInputData<F: SmallField> {
     pub shard_id_to_process: UInt8<F>,
@@ -97,7 +112,14 @@ impl<F: SmallField> CSPlaceholder<F> for StorageDeduplicatorInputData<F> {
     }
 }
 
-#[derive(Derivative, CSAllocatable, CSSelectable, CSVarLengthEncodable, WitnessHookable)]
+#[derive(
+    Derivative,
+    CSAllocatable,
+    CSSelectable,
+    CSVarLengthEncodable,
+    WitnessHookable,
+    WitVarLengthEncodable,
+)]
 #[derivative(Clone, Copy, Debug)]
 #[DerivePrettyComparison("true")]
 pub struct StorageDeduplicatorOutputData<F: SmallField> {

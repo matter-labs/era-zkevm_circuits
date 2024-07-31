@@ -4,6 +4,7 @@ use boojum::cs::Variable;
 use boojum::gadgets::traits::allocatable::CSAllocatableExt;
 use boojum::gadgets::traits::castable::WitnessCastable;
 use boojum::gadgets::traits::encodable::CircuitEncodable;
+use boojum::gadgets::traits::encodable::WitnessVarLengthEncodable;
 use boojum::gadgets::traits::selectable::parallel_select_variables;
 use cs_derive::*;
 use ethereum_types::Address;
@@ -31,7 +32,9 @@ use super::*;
 // - per-context computed rollback segment length
 // - per-context rollback_head
 
-#[derive(Derivative, CSAllocatable, CSVarLengthEncodable, WitnessHookable)]
+#[derive(
+    Derivative, CSAllocatable, CSVarLengthEncodable, WitnessHookable, WitVarLengthEncodable,
+)]
 #[derivative(Clone, Copy, Debug)]
 pub struct ExecutionContextRecord<F: SmallField> {
     pub this: UInt160<F>, // unfortunately delegatecall mangles this field - it can not be restored from callee's caller

@@ -4,7 +4,14 @@ use crate::base_structures::vm_state::*;
 use boojum::gadgets::queue::*;
 use boojum::serde_utils::BigArraySerde;
 
-#[derive(Derivative, CSAllocatable, CSSelectable, CSVarLengthEncodable, WitnessHookable)]
+#[derive(
+    Derivative,
+    CSAllocatable,
+    CSSelectable,
+    CSVarLengthEncodable,
+    WitnessHookable,
+    WitVarLengthEncodable,
+)]
 #[derivative(Clone, Debug)]
 pub struct VmInputData<F: SmallField> {
     pub rollback_queue_tail_for_block: [Num<F>; QUEUE_STATE_WIDTH],
@@ -27,7 +34,14 @@ impl<F: SmallField> CSPlaceholder<F> for VmInputData<F> {
     }
 }
 
-#[derive(Derivative, CSAllocatable, CSSelectable, CSVarLengthEncodable, WitnessHookable)]
+#[derive(
+    Derivative,
+    CSAllocatable,
+    CSSelectable,
+    CSVarLengthEncodable,
+    WitnessHookable,
+    WitVarLengthEncodable,
+)]
 #[derivative(Clone, Debug)]
 #[DerivePrettyComparison("true")]
 pub struct VmOutputData<F: SmallField> {

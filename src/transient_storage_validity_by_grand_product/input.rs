@@ -12,7 +12,8 @@ use boojum::{
         num::*,
         queue::*,
         traits::{
-            allocatable::*, encodable::CircuitVarLengthEncodable, selectable::Selectable,
+            allocatable::*, encodable::CircuitVarLengthEncodable,
+            encodable::WitnessVarLengthEncodable, selectable::Selectable,
             witnessable::WitnessHookable,
         },
         u256::*,
@@ -29,7 +30,14 @@ pub const TRANSIENT_STORAGE_VALIDITY_CHECK_PACKED_KEY_LENGTH: usize = 1 + 1 + 5 
 
 // FSM
 
-#[derive(Derivative, CSAllocatable, CSSelectable, CSVarLengthEncodable, WitnessHookable)]
+#[derive(
+    Derivative,
+    CSAllocatable,
+    CSSelectable,
+    CSVarLengthEncodable,
+    WitnessHookable,
+    WitVarLengthEncodable,
+)]
 #[derivative(Clone, Copy, Debug)]
 #[DerivePrettyComparison("true")]
 pub struct TransientStorageDeduplicatorFSMInputOutput<F: SmallField> {
@@ -65,7 +73,14 @@ impl<F: SmallField> CSPlaceholder<F> for TransientStorageDeduplicatorFSMInputOut
     }
 }
 
-#[derive(Derivative, CSAllocatable, CSSelectable, CSVarLengthEncodable, WitnessHookable)]
+#[derive(
+    Derivative,
+    CSAllocatable,
+    CSSelectable,
+    CSVarLengthEncodable,
+    WitnessHookable,
+    WitVarLengthEncodable,
+)]
 #[derivative(Clone, Debug)]
 pub struct TransientStorageDeduplicatorInputData<F: SmallField> {
     pub unsorted_log_queue_state: QueueState<F, QUEUE_STATE_WIDTH>,

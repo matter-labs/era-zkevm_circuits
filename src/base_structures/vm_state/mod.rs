@@ -9,6 +9,7 @@ use boojum::gadgets::num::Num;
 use boojum::gadgets::traits::allocatable::*;
 use boojum::gadgets::traits::auxiliary::PrettyComparison;
 use boojum::gadgets::traits::encodable::CircuitVarLengthEncodable;
+use boojum::gadgets::traits::encodable::WitnessVarLengthEncodable;
 use boojum::gadgets::traits::selectable::*;
 use boojum::gadgets::traits::witnessable::WitnessHookable;
 use boojum::gadgets::u16::UInt16;
@@ -29,7 +30,9 @@ pub const QUEUE_STATE_WIDTH: usize = 4;
 
 use zkevm_opcode_defs::REGISTERS_COUNT;
 
-#[derive(Derivative, CSAllocatable, CSVarLengthEncodable, WitnessHookable)]
+#[derive(
+    Derivative, CSAllocatable, CSVarLengthEncodable, WitnessHookable, WitVarLengthEncodable,
+)]
 #[derivative(Clone, Copy, Debug)]
 pub struct ArithmeticFlagsPort<F: SmallField> {
     pub overflow_or_less_than: Boolean<F>,
@@ -83,7 +86,14 @@ impl<F: SmallField> ArithmeticFlagsPort<F> {
     }
 }
 
-#[derive(Derivative, CSSelectable, CSAllocatable, CSVarLengthEncodable, WitnessHookable)]
+#[derive(
+    Derivative,
+    CSSelectable,
+    CSAllocatable,
+    CSVarLengthEncodable,
+    WitnessHookable,
+    WitVarLengthEncodable,
+)]
 #[derivative(Clone, Copy, Debug)]
 #[CSSelectableBound(
     "where [(); <ExecutionContextRecord::<F> as CSAllocatableExt<F>>::INTERNAL_STRUCT_LEN]:"
@@ -153,7 +163,14 @@ impl<F: SmallField> CSPlaceholder<F> for VmLocalState<F> {
     }
 }
 
-#[derive(Derivative, CSAllocatable, CSSelectable, CSVarLengthEncodable, WitnessHookable)]
+#[derive(
+    Derivative,
+    CSAllocatable,
+    CSSelectable,
+    CSVarLengthEncodable,
+    WitnessHookable,
+    WitVarLengthEncodable,
+)]
 #[derivative(Clone, Copy, Debug)]
 pub struct GlobalContext<F: SmallField> {
     pub zkporter_is_available: Boolean<F>,

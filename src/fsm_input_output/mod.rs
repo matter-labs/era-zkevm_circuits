@@ -13,6 +13,7 @@ use boojum::gadgets::num::Num;
 use boojum::gadgets::traits::allocatable::CSAllocatable;
 use boojum::gadgets::traits::allocatable::CSPlaceholder;
 use boojum::gadgets::traits::encodable::CircuitVarLengthEncodable;
+use boojum::gadgets::traits::encodable::WitnessVarLengthEncodable;
 use boojum::gadgets::traits::round_function::CircuitRoundFunction;
 use boojum::gadgets::traits::selectable::Selectable;
 use boojum::gadgets::traits::witnessable::WitnessHookable;
@@ -33,9 +34,24 @@ where
 #[derivative(Clone, Debug)]
 pub struct ClosedFormInput<
     F: SmallField,
-    T: Clone + std::fmt::Debug + CSAllocatable<F> + CircuitVarLengthEncodable<F> + WitnessHookable<F>,
-    IN: Clone + std::fmt::Debug + CSAllocatable<F> + CircuitVarLengthEncodable<F> + WitnessHookable<F>,
-    OUT: Clone + std::fmt::Debug + CSAllocatable<F> + CircuitVarLengthEncodable<F> + WitnessHookable<F>,
+    T: Clone
+        + std::fmt::Debug
+        + CSAllocatable<F>
+        + CircuitVarLengthEncodable<F>
+        + WitnessVarLengthEncodable<F>
+        + WitnessHookable<F>,
+    IN: Clone
+        + std::fmt::Debug
+        + CSAllocatable<F>
+        + CircuitVarLengthEncodable<F>
+        + WitnessVarLengthEncodable<F>
+        + WitnessHookable<F>,
+    OUT: Clone
+        + std::fmt::Debug
+        + CSAllocatable<F>
+        + CircuitVarLengthEncodable<F>
+        + WitnessVarLengthEncodable<F>
+        + WitnessHookable<F>,
 > where
     <T as CSAllocatable<F>>::Witness: serde::Serialize + serde::de::DeserializeOwned + Eq,
     <IN as CSAllocatable<F>>::Witness: serde::Serialize + serde::de::DeserializeOwned + Eq,
@@ -55,16 +71,19 @@ impl<
             + std::fmt::Debug
             + CSAllocatable<F>
             + CircuitVarLengthEncodable<F>
+            + WitnessVarLengthEncodable<F>
             + WitnessHookable<F>,
         IN: Clone
             + std::fmt::Debug
             + CSAllocatable<F>
             + CircuitVarLengthEncodable<F>
+            + WitnessVarLengthEncodable<F>
             + WitnessHookable<F>,
         OUT: Clone
             + std::fmt::Debug
             + CSAllocatable<F>
             + CircuitVarLengthEncodable<F>
+            + WitnessVarLengthEncodable<F>
             + WitnessHookable<F>,
     > ClosedFormInput<F, T, IN, OUT>
 where
@@ -143,16 +162,19 @@ impl<
             + std::fmt::Debug
             + CSAllocatable<F>
             + CircuitVarLengthEncodable<F>
+            + WitnessVarLengthEncodable<F>
             + WitnessHookable<F>,
         IN: Clone
             + std::fmt::Debug
             + CSAllocatable<F>
             + CircuitVarLengthEncodable<F>
+            + WitnessVarLengthEncodable<F>
             + WitnessHookable<F>,
         OUT: Clone
             + std::fmt::Debug
             + CSAllocatable<F>
             + CircuitVarLengthEncodable<F>
+            + WitnessVarLengthEncodable<F>
             + WitnessHookable<F>,
     > std::default::Default for ClosedFormInputWitness<F, T, IN, OUT>
 where
@@ -165,7 +187,14 @@ where
     }
 }
 
-#[derive(Derivative, CSAllocatable, CSSelectable, CSVarLengthEncodable, WitnessHookable)]
+#[derive(
+    Derivative,
+    CSAllocatable,
+    CSSelectable,
+    CSVarLengthEncodable,
+    WitnessHookable,
+    WitVarLengthEncodable,
+)]
 #[derivative(Clone, Debug)]
 pub struct ClosedFormInputCompactForm<F: SmallField> {
     pub start_flag: Boolean<F>,
@@ -255,16 +284,19 @@ impl<F: SmallField> ClosedFormInputCompactForm<F> {
             + std::fmt::Debug
             + CSAllocatable<F>
             + CircuitVarLengthEncodable<F>
+            + WitnessVarLengthEncodable<F>
             + WitnessHookable<F>,
         IN: Clone
             + std::fmt::Debug
             + CSAllocatable<F>
             + CircuitVarLengthEncodable<F>
+            + WitnessVarLengthEncodable<F>
             + WitnessHookable<F>,
         OUT: Clone
             + std::fmt::Debug
             + CSAllocatable<F>
             + CircuitVarLengthEncodable<F>
+            + WitnessVarLengthEncodable<F>
             + WitnessHookable<F>,
         R: CircuitRoundFunction<F, 8, 12, 4>,
     >(

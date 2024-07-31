@@ -9,7 +9,9 @@ use boojum::gadgets::traits::allocatable::CSPlaceholder;
 use boojum::gadgets::traits::allocatable::{CSAllocatable, CSAllocatableExt};
 use boojum::gadgets::traits::castable::WitnessCastable;
 use boojum::gadgets::traits::encodable::CircuitEncodableExt;
-use boojum::gadgets::traits::encodable::{CircuitEncodable, CircuitVarLengthEncodable};
+use boojum::gadgets::traits::encodable::{
+    CircuitEncodable, CircuitVarLengthEncodable, WitnessVarLengthEncodable,
+};
 use boojum::gadgets::traits::selectable::Selectable;
 use boojum::gadgets::traits::witnessable::WitnessHookable;
 use boojum::gadgets::u160::{recompose_address_from_u32x5, UInt160};
@@ -18,7 +20,14 @@ use boojum::gadgets::u32::UInt32;
 use boojum::gadgets::u8::UInt8;
 use cs_derive::*;
 
-#[derive(Derivative, CSAllocatable, CSSelectable, WitnessHookable, CSVarLengthEncodable)]
+#[derive(
+    Derivative,
+    CSAllocatable,
+    CSSelectable,
+    WitnessHookable,
+    CSVarLengthEncodable,
+    WitVarLengthEncodable,
+)]
 #[derivative(Clone, Copy, Debug, Hash)]
 pub struct LogQuery<F: SmallField> {
     pub address: UInt160<F>,

@@ -32,6 +32,7 @@ use boojum::gadgets::queue::QueueState;
 use boojum::gadgets::traits::allocatable::CSAllocatable;
 use boojum::gadgets::traits::allocatable::{CSAllocatableExt, CSPlaceholder};
 use boojum::gadgets::traits::encodable::CircuitVarLengthEncodable;
+use boojum::gadgets::traits::encodable::WitnessVarLengthEncodable;
 use boojum::gadgets::traits::round_function::CircuitRoundFunction;
 use boojum::gadgets::u160::UInt160;
 use boojum::gadgets::u8::UInt8;
@@ -42,7 +43,14 @@ pub mod buffer;
 pub mod input;
 use self::input::*;
 
-#[derive(Derivative, CSAllocatable, CSSelectable, CSVarLengthEncodable, WitnessHookable)]
+#[derive(
+    Derivative,
+    CSAllocatable,
+    CSSelectable,
+    CSVarLengthEncodable,
+    WitnessHookable,
+    WitVarLengthEncodable,
+)]
 #[derivative(Clone, Copy, Debug)]
 // #[DerivePrettyComparison("true")]
 pub struct Keccak256PrecompileCallParams<F: SmallField> {

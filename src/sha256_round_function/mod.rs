@@ -30,6 +30,7 @@ use boojum::gadgets::sha256::{self};
 use boojum::gadgets::traits::allocatable::CSAllocatable;
 use boojum::gadgets::traits::allocatable::{CSAllocatableExt, CSPlaceholder};
 use boojum::gadgets::traits::encodable::CircuitVarLengthEncodable;
+use boojum::gadgets::traits::encodable::WitnessVarLengthEncodable;
 use boojum::gadgets::traits::round_function::CircuitRoundFunction;
 use boojum::gadgets::u160::UInt160;
 use boojum::gadgets::u8::UInt8;
@@ -38,7 +39,14 @@ use std::sync::{Arc, RwLock};
 pub mod input;
 use self::input::*;
 
-#[derive(Derivative, CSAllocatable, CSSelectable, CSVarLengthEncodable, WitnessHookable)]
+#[derive(
+    Derivative,
+    CSAllocatable,
+    CSSelectable,
+    CSVarLengthEncodable,
+    WitnessHookable,
+    WitVarLengthEncodable,
+)]
 #[derivative(Clone, Copy, Debug)]
 // #[DerivePrettyComparison("true")]
 pub struct Sha256PrecompileCallParams<F: SmallField> {
