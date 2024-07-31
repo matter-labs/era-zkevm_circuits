@@ -11,7 +11,8 @@ use boojum::gadgets::u8::UInt8;
 use boojum::gadgets::{
     boolean::Boolean,
     traits::{
-        encodable::CircuitVarLengthEncodable, selectable::Selectable, witnessable::WitnessHookable,
+        encodable::CircuitVarLengthEncodable, encodable::WitnessVarLengthEncodable,
+        selectable::Selectable, witnessable::WitnessHookable,
     },
 };
 use boojum::serde_utils::BigArraySerde;
@@ -27,7 +28,14 @@ pub struct BlobChunk<F: SmallField> {
     pub inner: [UInt8<F>; BLOB_CHUNK_SIZE],
 }
 
-#[derive(Derivative, CSAllocatable, CSSelectable, CSVarLengthEncodable, WitnessHookable)]
+#[derive(
+    Derivative,
+    CSAllocatable,
+    CSSelectable,
+    CSVarLengthEncodable,
+    WitVarLengthEncodable,
+    WitnessHookable,
+)]
 #[derivative(Clone, Copy, Debug)]
 #[DerivePrettyComparison("true")]
 pub struct EIP4844OutputData<F: SmallField> {

@@ -1,7 +1,14 @@
 use super::*;
 use boojum::serde_utils::BigArraySerde;
 
-#[derive(Derivative, CSAllocatable, CSSelectable, CSVarLengthEncodable, WitnessHookable)]
+#[derive(
+    Derivative,
+    CSAllocatable,
+    CSSelectable,
+    CSVarLengthEncodable,
+    WitnessHookable,
+    WitVarLengthEncodable,
+)]
 #[derivative(Clone, Copy, Debug)]
 #[CSSelectableBound(
     "where [(); <ExecutionContextRecord::<F> as CSAllocatableExt<F>>::INTERNAL_STRUCT_LEN]:"
@@ -40,7 +47,9 @@ use crate::base_structures::vm_state::saved_context::ExecutionContextRecord;
 
 // execution context that keeps all explicit data about the current execution frame,
 // and avoid recomputing of quantities that also do not change between calls
-#[derive(Derivative, CSAllocatable, CSVarLengthEncodable, WitnessHookable)]
+#[derive(
+    Derivative, CSAllocatable, CSVarLengthEncodable, WitnessHookable, WitVarLengthEncodable,
+)]
 #[derivative(Clone, Copy, Debug)]
 pub struct FullExecutionContext<F: SmallField> {
     pub saved_context: ExecutionContextRecord<F>,

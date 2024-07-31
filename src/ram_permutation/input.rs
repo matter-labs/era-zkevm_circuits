@@ -12,8 +12,8 @@ use boojum::gadgets::{
     queue::full_state_queue::*,
     queue::*,
     traits::{
-        allocatable::*, encodable::CircuitVarLengthEncodable, selectable::Selectable,
-        witnessable::WitnessHookable,
+        allocatable::*, encodable::CircuitVarLengthEncodable, encodable::WitnessVarLengthEncodable,
+        selectable::Selectable, witnessable::WitnessHookable,
     },
     u256::UInt256,
     u32::UInt32,
@@ -22,7 +22,14 @@ use boojum::serde_utils::BigArraySerde;
 use cs_derive::*;
 use derivative::*;
 
-#[derive(Derivative, CSAllocatable, CSSelectable, CSVarLengthEncodable, WitnessHookable)]
+#[derive(
+    Derivative,
+    CSAllocatable,
+    CSSelectable,
+    CSVarLengthEncodable,
+    WitnessHookable,
+    WitVarLengthEncodable,
+)]
 #[derivative(Clone, Debug)]
 pub struct RamPermutationInputData<F: SmallField> {
     pub unsorted_queue_initial_state: QueueState<F, FULL_SPONGE_QUEUE_STATE_WIDTH>,
@@ -46,7 +53,14 @@ impl<F: SmallField> CSPlaceholder<F> for RamPermutationInputData<F> {
 pub const RAM_SORTING_KEY_LENGTH: usize = 3;
 pub const RAM_FULL_KEY_LENGTH: usize = 2;
 
-#[derive(Derivative, CSAllocatable, CSSelectable, CSVarLengthEncodable, WitnessHookable)]
+#[derive(
+    Derivative,
+    CSAllocatable,
+    CSSelectable,
+    CSVarLengthEncodable,
+    WitnessHookable,
+    WitVarLengthEncodable,
+)]
 #[derivative(Clone, Copy, Debug)]
 #[DerivePrettyComparison("true")]
 pub struct RamPermutationFSMInputOutput<F: SmallField> {

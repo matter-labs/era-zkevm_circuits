@@ -11,12 +11,20 @@ use boojum::cs::traits::cs::DstBuffer;
 use boojum::cs::Variable;
 use boojum::gadgets::traits::allocatable::{CSAllocatable, CSAllocatableExt};
 use boojum::gadgets::traits::encodable::CircuitVarLengthEncodable;
+use boojum::gadgets::traits::encodable::WitnessVarLengthEncodable;
 use boojum::gadgets::traits::selectable::Selectable;
 use boojum::gadgets::traits::witnessable::WitnessHookable;
 
 use cs_derive::*;
 
-#[derive(Derivative, CSSelectable, CSAllocatable, CSVarLengthEncodable, WitnessHookable)]
+#[derive(
+    Derivative,
+    CSSelectable,
+    CSAllocatable,
+    CSVarLengthEncodable,
+    WitnessHookable,
+    WitVarLengthEncodable,
+)]
 #[derivative(Clone, Copy, Debug, Hash)]
 pub struct VMRegister<F: SmallField> {
     pub is_pointer: Boolean<F>,

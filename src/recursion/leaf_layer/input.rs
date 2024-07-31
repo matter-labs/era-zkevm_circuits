@@ -11,8 +11,8 @@ use boojum::gadgets::traits::auxiliary::PrettyComparison;
 use boojum::gadgets::{
     boolean::Boolean,
     traits::{
-        allocatable::*, encodable::CircuitVarLengthEncodable, selectable::Selectable,
-        witnessable::WitnessHookable,
+        allocatable::*, encodable::CircuitVarLengthEncodable, encodable::WitnessVarLengthEncodable,
+        selectable::Selectable, witnessable::WitnessHookable,
     },
 };
 use cs_derive::*;
@@ -20,7 +20,14 @@ use cs_derive::*;
 use boojum::field::FieldExtension;
 use boojum::serde_utils::BigArraySerde;
 
-#[derive(Derivative, CSAllocatable, CSSelectable, CSVarLengthEncodable, WitnessHookable)]
+#[derive(
+    Derivative,
+    CSAllocatable,
+    CSSelectable,
+    CSVarLengthEncodable,
+    WitnessHookable,
+    WitVarLengthEncodable,
+)]
 #[derivative(Clone, Copy, Debug)]
 #[DerivePrettyComparison("true")]
 pub struct RecursionLeafParameters<F: SmallField> {

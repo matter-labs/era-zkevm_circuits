@@ -10,6 +10,7 @@ use boojum::gadgets::queue::*;
 use boojum::gadgets::traits::allocatable::CSAllocatable;
 use boojum::gadgets::traits::allocatable::CSPlaceholder;
 use boojum::gadgets::traits::encodable::CircuitVarLengthEncodable;
+use boojum::gadgets::traits::encodable::WitnessVarLengthEncodable;
 
 use boojum::cs::traits::cs::ConstraintSystem;
 use boojum::field::SmallField;
@@ -23,7 +24,14 @@ use boojum::serde_utils::BigArraySerde;
 pub const MEMORY_QUERIES_PER_CYCLE: usize = 6;
 pub const KECCAK_PRECOMPILE_BUFFER_SIZE: usize = MEMORY_QUERIES_PER_CYCLE * 32;
 
-#[derive(Derivative, CSAllocatable, CSSelectable, CSVarLengthEncodable, WitnessHookable)]
+#[derive(
+    Derivative,
+    CSAllocatable,
+    CSSelectable,
+    CSVarLengthEncodable,
+    WitnessHookable,
+    WitVarLengthEncodable,
+)]
 #[derivative(Clone, Copy, Debug)]
 #[DerivePrettyComparison("true")]
 pub struct Keccak256RoundFunctionFSM<F: SmallField> {
@@ -57,7 +65,14 @@ impl<F: SmallField> CSPlaceholder<F> for Keccak256RoundFunctionFSM<F> {
     }
 }
 
-#[derive(Derivative, CSAllocatable, CSSelectable, CSVarLengthEncodable, WitnessHookable)]
+#[derive(
+    Derivative,
+    CSAllocatable,
+    CSSelectable,
+    CSVarLengthEncodable,
+    WitnessHookable,
+    WitVarLengthEncodable,
+)]
 #[derivative(Clone, Copy, Debug)]
 #[DerivePrettyComparison("true")]
 pub struct Keccak256RoundFunctionFSMInputOutput<F: SmallField> {

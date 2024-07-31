@@ -2,7 +2,14 @@ use super::*;
 use crate::boojum::gadgets::traits::auxiliary::PrettyComparison;
 use crate::boojum::serde_utils::BigArraySerde;
 
-#[derive(Derivative, CSAllocatable, CSSelectable, CSVarLengthEncodable, WitnessHookable)]
+#[derive(
+    Derivative,
+    CSAllocatable,
+    CSSelectable,
+    CSVarLengthEncodable,
+    WitnessHookable,
+    WitVarLengthEncodable,
+)]
 #[derivative(Clone, Copy, Debug)]
 #[DerivePrettyComparison("true")]
 pub struct ByteBuffer<F: SmallField, const BUFFER_SIZE: usize> {
