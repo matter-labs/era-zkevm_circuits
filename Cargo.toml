@@ -1,6 +1,6 @@
 [package]
 name = "zkevm_circuits"
-version = "0.141.0"
+version = "0.141.1"
 edition = "2021"
 authors = ["The Matter Labs Team <hello@matterlabs.dev>"]
 homepage = "https://zksync.io/"
@@ -30,8 +30,8 @@ hex = "0.4"
 seq-macro = "0.3"
 
 zkevm_opcode_defs = "=0.141.0"
-boojum = "=0.2.0"
-cs_derive = "=0.2.0"
+boojum = "0"
+cs_derive = "0"
 
 [features]
 default = []
