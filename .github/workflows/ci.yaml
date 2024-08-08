@@ -9,9 +9,6 @@ jobs:
     steps:
       - uses: actions/checkout@v3
       - uses: actions-rust-lang/setup-rust-toolchain@v1
-        with:
-          toolchain: nightly-2023-09-20
-          rustflags: ""
       - run: cargo build --verbose --release
       - run: cargo test --verbose --release --all -- --test-threads=1
 
