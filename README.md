@@ -1,3 +1,7 @@
+> [!WARNING]
+> This repository has been archived. Development has moved to the [zksync-protocol](https://github.com/matter-labs/zksync-protocol) repository.
+> Please use it instead.
+
 # CPU/GPU Based Prover for zkSync Era
 
 [![Logo](eraLogo.png)](https://zksync.io/)
